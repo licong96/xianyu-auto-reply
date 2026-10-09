@@ -1,0 +1,44 @@
+# ============================================================
+# docker-compose 生产加固覆盖层
+# 与 docker-compose.yml 叠加使用（需要 docker compose v2.24+）：
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+#     --env-file .env.production up -d --build
+#
+# 本文件做的事：
+# 1. MySQL/Redis 换用 Docker 官方镜像（不信任作者构建的 registry 镜像）
+# 2. 后端三个端口固定只绑 127.0.0.1（frontend 容器内 Nginx 代理 /api，无需公网暴露）
+# 3. frontend 端口绑定地址由 FRONTEND_BIND 控制（默认 127.0.0.1）：
+#    - IP 阶段：.env.production 里设 FRONTEND_BIND=0.0.0.0，直接 IP+端口访问
+#    - 域名阶段：改回 127.0.0.1，走宿主机 Nginx 443（见 deploy/生产部署加固说明.md）
+#    （ports 用 !reset 整体替换基座配置，避免数组合并产生重复绑定）
+# 4. 强制关闭作者服务器的远程广告/公告/弹窗（即使 .env 配错也生效）
+# 5. 收紧 CORS（覆盖原文件中的 *）
+# ============================================================
+
+services:
+  mysql:
+    image: mysql:8.0
+
+  redis:
+    image: redis:7-alpine
+
+  backend-web:
+    ports: !reset
+      - "127.0.0.1:8089:8089"
+    environment:
+      - ENABLE_REMOTE_ADS=false
+      - ENABLE_REMOTE_ANNOUNCEMENTS=false
+      - ENABLE_REMOTE_POPUP_ANNOUNCEMENTS=false
+      - CORS_ORIGINS=${CORS_ORIGINS:-https://xy-admin.your-domain.com}
+
+  websocket:
+    ports: !reset
+      - "127.0.0.1:8090:8090"
+
+  scheduler:
+    ports: !reset
+      - "127.0.0.1:8091:8091"
+
+  frontend:
+    ports: !reset
+      - "${FRONTEND_BIND:-127.0.0.1}:9000:80"
