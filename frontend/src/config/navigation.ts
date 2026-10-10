@@ -115,6 +115,8 @@ export const mainNavItems: NavEntry[] = [
       { key: 'product-publish-logs', icon: ScrollText, label: '发布日志', path: '/product-publish/logs' },
     ],
   },
+  // CUSTOM: 资料池自动化流水线
+  { key: 'material-pool', icon: Database, label: '资料池', path: '/material-pool' },
   {
     key: 'product-monitor',
     icon: PackageSearch,

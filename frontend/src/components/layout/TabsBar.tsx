@@ -83,6 +83,8 @@ const routeTitles: Record<string, string> = {
   '/product-publish/batch': '批量发布',
   '/product-publish/addresses': '地址库',
   '/product-publish/logs': '发布日志',
+  // CUSTOM: 资料池自动化流水线
+  '/material-pool': '资料池',
   '/product-monitor/overview': '监控总览',
   '/product-monitor/listing': '商品监控',
   '/product-monitor/categories': '监控分类',

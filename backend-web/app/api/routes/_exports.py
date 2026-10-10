@@ -57,6 +57,7 @@ from . import (
     personal_addresses,
     listing_monitor_category,
     listing_monitor,
+    material_pool,  # CUSTOM: 资料池自动化流水线
     collect_fallback_account,
     order_fallback_account,
     external_cookie,
@@ -206,6 +207,9 @@ api_router.include_router(chat_quick_phrase.router, tags=["在线聊天(新)快�
 api_router.include_router(chat_customer_order.router, tags=["在线聊天(新)客户订单"])  # 已定义prefix="/chat-new"
 # 版本检测（公开接口，无需登录即可查询版本信息）
 api_router.include_router(version.router, tags=["版本检测"])  # 已定义prefix="/version"
+
+# CUSTOM: 资料池自动化流水线
+api_router.include_router(material_pool.router, tags=["资料池"])  # 已定义prefix="/material-pool"
 
 
 __all__ = ["api_router"]

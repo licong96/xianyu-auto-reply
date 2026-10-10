@@ -67,6 +67,8 @@ const ProductPublish = React.lazy(() => import('@/pages/product-publish/ProductP
 const BatchPublish = React.lazy(() => import('@/pages/product-publish/BatchPublish').then(m => ({ default: m.BatchPublish })))
 const PublishAddresses = React.lazy(() => import('@/pages/product-publish/PublishAddresses').then(m => ({ default: m.PublishAddresses })))
 const PublishLogs = React.lazy(() => import('@/pages/product-publish/PublishLogs').then(m => ({ default: m.PublishLogs })))
+// CUSTOM: 资料池自动化流水线
+const MaterialPool = React.lazy(() => import('@/pages/material-pool/MaterialPool').then(m => ({ default: m.MaterialPool })))
 const ListingMonitor = React.lazy(() => import('@/pages/product-monitor/ListingMonitor').then(m => ({ default: m.ListingMonitor })))
 const MonitorOverview = React.lazy(() => import('@/pages/product-monitor/MonitorOverview').then(m => ({ default: m.MonitorOverview })))
 const MonitorCategory = React.lazy(() => import('@/pages/product-monitor/MonitorCategory').then(m => ({ default: m.MonitorCategory })))
@@ -373,6 +375,8 @@ function App() {
             <Route path="product-publish/batch" element={<BatchPublish />} />
             <Route path="product-publish/addresses" element={<PublishAddresses />} />
             <Route path="product-publish/logs" element={<PublishLogs />} />
+            {/* CUSTOM: 资料池自动化流水线 */}
+            <Route path="material-pool" element={<MaterialPool />} />
             {/* 商品监控 */}
             <Route path="product-monitor/overview" element={<MonitorOverview />} />
             <Route path="product-monitor/categories" element={<MonitorCategory />} />
