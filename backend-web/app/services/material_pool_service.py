@@ -272,7 +272,7 @@ class MaterialPoolService:
 
             await upload_pool_row_to_pan(pool_id)
             # 上传在独立会话提交，本请求会话的 identity map 里是旧对象，先过期再重查
-            await self.session.expire_all()
+            self.session.expire_all()
             return _row_to_dict(await self._get_row(user, pool_id))
         except Exception as exc:  # noqa: BLE001 - 统一标记 failed，保证状态落库后可原地重试
             message = str(exc)[:1000]
