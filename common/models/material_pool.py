@@ -73,6 +73,7 @@ class MaterialPool(TimestampMixin, Base):
     local_path: Mapped[str | None] = mapped_column(String(500), comment="本地文件路径")
     file_size: Mapped[int | None] = mapped_column(BigInteger, comment="文件大小（字节）")
     file_hash: Mapped[str | None] = mapped_column(CHAR(32), comment="文件 md5（二次去重）")
+    redownload_url: Mapped[str | None] = mapped_column(Text, comment="源站重新下载地址（预留字段，暂未启用；补下载走下载列表页）")
 
     # ---- 网盘信息（pan_client 回写）----
     pan_type: Mapped[str] = mapped_column(String(20), default="quark", server_default="quark", comment="网盘类型")

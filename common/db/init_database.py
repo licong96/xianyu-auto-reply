@@ -1458,6 +1458,7 @@ class DatabaseInitializer:
                 local_path VARCHAR(500) DEFAULT NULL COMMENT '本地文件路径',
                 file_size BIGINT DEFAULT NULL COMMENT '文件大小（字节）',
                 file_hash CHAR(32) DEFAULT NULL COMMENT '文件 md5（二次去重）',
+                redownload_url TEXT DEFAULT NULL COMMENT '源站重新下载地址（预留字段，暂未启用）',
                 pan_type VARCHAR(20) NOT NULL DEFAULT 'quark' COMMENT '网盘类型',
                 pan_path VARCHAR(500) DEFAULT NULL COMMENT '网盘远端路径，如 /资料池/<学校>/<年份>/xx.pdf',
                 pan_url VARCHAR(500) DEFAULT NULL COMMENT '网盘分享链接',
@@ -2005,6 +2006,10 @@ class DatabaseInitializer:
     
     # 字段迁移定义：表名 -> [(字段名, 字段定义, 在哪个字段后面)]
     COLUMN_MIGRATIONS = {
+        # CUSTOM: 资料池自动化流水线 - 存量表补字段
+        "xy_material_pool": [
+            ("redownload_url", "TEXT DEFAULT NULL COMMENT '源站重新下载地址（预留字段，暂未启用）'", "file_hash"),
+        ],
         "xy_keyword_rules": [
             ("location_name", "VARCHAR(255) DEFAULT NULL COMMENT '站外联系方式定位名称'", "image_url"),
             ("location_longitude", "VARCHAR(32) DEFAULT NULL COMMENT '站外联系方式经度'", "location_name"),

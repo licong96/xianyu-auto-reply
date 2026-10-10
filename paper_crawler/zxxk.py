@@ -195,6 +195,9 @@ class ZxxkCrawler:
         timeout = int(self.cfg["crawl"].get("download_timeout", 120))
         before = {p.name for p in watch_dir.iterdir() if p.is_file()}
 
+        # 详情页加载完成后再多等几秒，确保页面/脚本稳定（学科网有反爬刷新）
+        time.sleep(3)
+
         # 点击主按钮：重试 3 次（反刷新的元素失效场景），滚动到可见 + JS 点击兜底
         clicked = False
         for attempt in range(1, 4):
@@ -221,8 +224,8 @@ class ZxxkCrawler:
         if not clicked:
             return
 
-        # 二次确认：layui iframe 内的「确认」按钮
-        time.sleep(2)
+        # 等弹窗完全渲染后再点二次确认
+        time.sleep(3)
         try:
             frame = self.tab.get_frame("css:#layui-layer-iframe2") or self.tab.get_frame("css:iframe[id^='layui-layer-iframe']")
             if frame:

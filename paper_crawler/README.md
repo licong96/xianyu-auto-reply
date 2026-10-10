@@ -39,6 +39,18 @@ python3 -m venv .venv
 
 ## 下载校准（如站点改版）
 
-下载按钮选择器在 `zxxk.py` 的 `download()` 方法中（候选顺序：本地下载/立即下载/下载资料）。
-若点击不到，打开详情页 F12 确认按钮文案后调整候选列表即可。
-其余列表选择器已于 2026-10-10 按真实页面结构实测校准。
+下载链路已按真实页面实测校准（2026-10-10）：
+
+1. 详情页主按钮 `#btnSoftDownload`（VIP会员 免费下载）
+2. 弹出 layui iframe 二次确认，点击 `.balance-payment-btn`（确认）
+3. 自动跳转下载页并完成下载，文件落在 `~/Downloads/zxxk`（Chrome 下载目录，
+   在 config.yaml 的 `zxxk_download_dir` 配置），爬虫监控该目录并归档到 `data/papers/`
+
+注意节奏：详情页加载后 +3 秒再点下载；点击主按钮后 +3 秒再点确认（弹窗渲染等待）。
+
+## 补下载（本地文件缺失时）
+
+学科网「我的下载」列表页 https://user.zxxk.com/download/list 有每条资源的
+「重新下载」入口（`.again-down`，指向详情页如 /soft/{id}.html）。
+补下载流程：打开下载列表 → 点重新下载进详情页 → 点 #btnSoftDownload →
+自动跳转 /soft/softdownload?softid={id} 完成下载。后续可做补下载服务批量回填 local_path。
