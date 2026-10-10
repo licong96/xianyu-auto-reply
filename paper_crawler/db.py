@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from pathlib import Path
 from typing import Iterable
@@ -17,6 +18,26 @@ from sqlalchemy import select
 
 from common.db.session import async_session_maker
 from common.models.material_pool import MaterialPool, STATUS_CRAWLED
+
+# 整个采集过程共用同一个事件循环：
+# asyncmy 连接池与循环绑定，每次 asyncio.run() 新建循环会导致
+# "got Future attached to a different loop"
+_loop: asyncio.AbstractEventLoop | None = None
+
+
+def run(coro):
+    """在共享事件循环上执行协程（替代每次 asyncio.run）。"""
+    global _loop
+    if _loop is None or _loop.is_closed():
+        _loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(_loop)
+    return _loop.run_until_complete(coro)
+
+
+async def dispose() -> None:
+    """释放数据库连接池（程序退出前调用）。"""
+    from common.db.session import async_engine
+    await async_engine.dispose()
 
 
 def md5_file(path: str | Path, chunk_size: int = 1 << 20) -> str:

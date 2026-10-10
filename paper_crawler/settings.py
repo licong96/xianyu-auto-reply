@@ -56,4 +56,8 @@ def load_config() -> dict:
         p = (PROJECT_ROOT / crawl["download_dir"]).resolve()
         p.mkdir(parents=True, exist_ok=True)
         crawl["download_dir"] = str(p)
+    if crawl.get("zxxk_download_dir"):
+        p = Path(crawl["zxxk_download_dir"]).expanduser().resolve()
+        p.mkdir(parents=True, exist_ok=True)
+        crawl["zxxk_download_dir"] = str(p)
     return cfg

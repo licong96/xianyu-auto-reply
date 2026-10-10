@@ -7,8 +7,8 @@ browser:
   user_data_dir: "browser_data/zxxk"   # 相对项目根目录，持久化登录态
   headless: false                      # 登录与下载建议有头模式，便于人工处理验证
   login_url: "https://www.zxxk.com/"
-  # 判断已登录的元素（CSS），找不到视为未登录
-  logged_in_selector: ".user-name, .header-user, a[href*='user']"
+  # 你的学科网用户名/昵称（登录后页面右上角显示的文字），填写后登录检测最可靠
+  login_username: ""
 
 # 采集行为
 crawl:
@@ -17,7 +17,9 @@ crawl:
   interval_seconds: 2     # 条与条之间的间隔，反爬缓冲
   page_wait_seconds: 3    # 翻页后等待渲染
   download: true          # 是否下载 PDF（false 则只采元数据，可后续补下载）
-  download_dir: "data/papers"  # 相对项目根目录
+  download_dir: "data/papers"  # 资料最终保存目录（相对项目根目录）
+  # zxxk 下载实际落盘位置（Chrome 下载目录，学科网下载会保存到这里）
+  zxxk_download_dir: "~/Downloads/zxxk"
   download_timeout: 120   # 单文件下载等待秒数
 
 # 学校识别：在标题中匹配这些关键词填入 school 字段（按优先级顺序）

@@ -16,9 +16,7 @@
 """
 from __future__ import annotations
 
-import asyncio
 import re
-import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -74,22 +72,55 @@ class ZxxkCrawler:
         self.tab = self.browser.latest_tab
         logger.info(f"浏览器已就绪（端口 {browser_cfg['port']}，用户目录 {browser_cfg['user_data_dir']}）")
 
-    def wait_for_login(self, timeout: int = 600) -> None:
-        """未登录则等待人工在浏览器中登录。轮询登录标记，最多等待 timeout 秒。"""
+    def _loginish_cookie_names(self) -> set[str]:
+        """浏览器级读取 zxxk 域登录态 Cookie（不依赖页面 DOM，抗反爬刷新）。"""
+        found = set()
+        try:
+            for c in self.tab.cookies(all_domains=True):
+                domain = c.get("domain", "") or ""
+                name = c.get("name", "") or ""
+                if "zxxk" in domain and re.search(r"passport|ticket|login|auth|token|user", name, re.I):
+                    found.add(name)
+        except Exception as e:
+            logger.debug(f"读取 cookie 失败：{e}")
+        return found
+
+    def _page_has(self, text: str) -> bool:
+        """页面文本是否包含指定内容（容错页面刷新重连）。"""
+        try:
+            return bool(text and text in (self.tab.html or ""))
+        except Exception:
+            return False
+
+    def wait_for_login(self, timeout: int = 600, skip: bool = False) -> None:
+        """未登录则等待人工在浏览器中登录。
+
+        判定信号（满足其一即视为已登录）：
+        1. zxxk 域出现登录态 Cookie（passport/ticket/login/auth/token/user 命名）
+        2. config.yaml 的 login_username 出现在页面中（最可靠，建议填写）
+        skip=True 时不检测直接继续（人工确认已登录后的快速重跑）。
+        """
         browser_cfg = self.cfg["browser"]
-        selector = browser_cfg.get("logged_in_selector", "")
+        username = (browser_cfg.get("login_username") or "").strip()
+        if skip:
+            logger.info("已指定 --no-login-wait，跳过登录检测")
+            return
         self.tab.get(browser_cfg["login_url"])
-        time.sleep(3)
-        if selector and self.tab.ele(selector):
+        time.sleep(4)
+        if self._loginish_cookie_names() or (username and self._page_has(username)):
             logger.info("检测到已登录状态，直接开始采集")
             return
-        logger.warning("未检测到登录状态——请在打开的浏览器窗口中完成学科网会员登录")
+        print("\n>>> 请在打开的浏览器窗口中完成学科网会员登录，登录后采集将自动开始 <<<\n", flush=True)
+        logger.warning("未检测到登录状态——等待人工登录（最多 10 分钟）")
         deadline = time.time() + timeout
         while time.time() < deadline:
             time.sleep(5)
-            self.tab.get(browser_cfg["login_url"])
+            try:
+                self.tab.get(browser_cfg["login_url"])
+            except Exception:
+                pass
             time.sleep(2)
-            if selector and self.tab.ele(selector):
+            if self._loginish_cookie_names() or (username and self._page_has(username)):
                 logger.info("登录成功，开始采集")
                 return
         raise RuntimeError("等待登录超时，请重新运行")
@@ -151,38 +182,75 @@ class ZxxkCrawler:
             item.published_at = f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
 
     def download(self, item: PaperItem) -> None:
-        """在详情页点击下载，等待文件落盘。失败不抛异常，留待后续补下载。"""
-        download_dir = Path(self.cfg["crawl"]["download_dir"])
-        timeout = int(self.cfg["crawl"].get("download_timeout", 120))
-        before = {p.name for p in download_dir.iterdir() if p.is_file()}
+        """在详情页点击下载（含 layui 二次确认），文件落盘到 zxxk_download_dir 后归档到 download_dir。
 
+        已实测校准（2026-10-10）：
+        1. 主按钮 #btnSoftDownload（VIP会员 免费下载）
+        2. 弹出 layui iframe（#layui-layer-iframe*），内有 .balance-payment-btn「确认」
+        3. 确认后自动跳转并下载，文件落在 ~/Downloads/zxxk（Chrome 下载目录）
+        失败不抛异常，留待后续补下载。
+        """
+        final_dir = Path(self.cfg["crawl"]["download_dir"])
+        watch_dir = Path(self.cfg["crawl"]["zxxk_download_dir"])
+        timeout = int(self.cfg["crawl"].get("download_timeout", 120))
+        before = {p.name for p in watch_dir.iterdir() if p.is_file()}
+
+        # 点击主按钮：重试 3 次（反刷新的元素失效场景），滚动到可见 + JS 点击兜底
         clicked = False
-        # 候选下载入口：优先「本地下载」，其次包含「下载」的按钮/链接
-        for pattern in ('text=本地下载', 'text=立即下载', 'text=下载资料'):
-            ele = self.tab.ele(pattern)
-            if ele:
+        for attempt in range(1, 4):
+            try:
+                btn = self.tab.ele("css:#btnSoftDownload", timeout=5)
+                if not btn:
+                    logger.warning(f"第 {attempt} 次未找到 #btnSoftDownload")
+                    time.sleep(2)
+                    continue
                 try:
-                    ele.click()
-                    clicked = True
-                    logger.info(f"点击下载入口：{pattern}")
-                    break
-                except Exception as e:
-                    logger.warning(f"点击 {pattern} 失败：{e}")
+                    btn.scroll.to_see()
+                except Exception:
+                    pass
+                try:
+                    btn.click()
+                except Exception:
+                    btn.click(by_js=True)
+                clicked = True
+                logger.info("点击下载主按钮 #btnSoftDownload")
+                break
+            except Exception as e:
+                logger.warning(f"第 {attempt} 次点击下载主按钮失败：{e!r}")
+                time.sleep(2)
         if not clicked:
-            logger.warning(f"soft_id={item.soft_id} 未找到下载入口（可能未登录或页面结构变化），跳过下载")
             return
 
+        # 二次确认：layui iframe 内的「确认」按钮
+        time.sleep(2)
+        try:
+            frame = self.tab.get_frame("css:#layui-layer-iframe2") or self.tab.get_frame("css:iframe[id^='layui-layer-iframe']")
+            if frame:
+                confirm = frame.ele("css:.balance-payment-btn") or frame.ele("text=确认")
+                if confirm:
+                    confirm.click()
+                    logger.info("点击二次确认「确认」")
+        except Exception as e:
+            logger.debug(f"二次确认处理（可能无需确认）：{e}")
+
+        # 等待 zxxk 下载目录出现新文件，然后归档到 download_dir
         deadline = time.time() + timeout
         while time.time() < deadline:
             time.sleep(2)
-            new_files = [p for p in download_dir.iterdir()
+            new_files = [p for p in watch_dir.iterdir()
                          if p.is_file() and p.name not in before and not p.name.endswith(".crdownload")]
             if new_files:
                 f = max(new_files, key=lambda p: p.stat().st_mtime)
-                item.local_path = str(f)
-                item.file_size = f.stat().st_size
-                item.file_hash = db.md5_file(f)
-                logger.info(f"下载完成：{f.name}（{item.file_size} 字节）")
+                safe_name = re.sub(r'[\\/:*?"<>|\s]+', "_", item.title)[:60]
+                target = final_dir / f"{item.soft_id}_{safe_name}{f.suffix}"
+                try:
+                    f.rename(target)
+                except OSError:
+                    target = f  # 移动失败则保留原位置
+                item.local_path = str(target)
+                item.file_size = target.stat().st_size
+                item.file_hash = db.md5_file(target)
+                logger.info(f"下载完成：{target.name}（{item.file_size} 字节）")
                 return
         logger.warning(f"soft_id={item.soft_id} 下载超时（{timeout}s），留待补下载")
 
@@ -232,25 +300,38 @@ class ZxxkCrawler:
 
     # ---------- 主流程 ----------
 
-    def run(self, keyword: str, max_pages: int | None = None, download: bool | None = None) -> dict:
+    def run(self, keyword: str, max_pages: int | None = None, download: bool | None = None,
+            limit: int | None = None, skip_login_wait: bool = False) -> dict:
         crawl_cfg = self.cfg["crawl"]
         max_pages = max_pages or int(crawl_cfg.get("max_pages", 3))
         download = bool(crawl_cfg.get("download", True)) if download is None else download
         interval = float(crawl_cfg.get("interval_seconds", 2))
 
-        stats = {"new": 0, "skipped": 0, "failed": 0, "downloaded": 0}
-        self.wait_for_login()
+        stats = {"new": 0, "skipped": 0, "failed": 0, "downloaded": 0, "keyword_filtered": 0}
+        self.wait_for_login(skip=skip_login_wait)
 
         for page in range(1, max_pages + 1):
+            if limit is not None and stats["new"] >= limit:
+                break
             items = self.parse_list_page(keyword, page)
             if not items:
                 logger.info("没有更多结果，结束翻页")
                 break
 
+            # 关键词过滤：标题必须包含搜索关键词才进详情（排除「名校协作体」等沾边结果）
+            before = len(items)
+            items = [it for it in items if keyword in it.title]
+            stats["keyword_filtered"] += before - len(items)
+            if not items:
+                continue
+
             # 断点续爬：批量预取已入库的 source_url
-            existing = asyncio.run(db.fetch_existing_urls([it.source_url for it in items]))
+            existing = db.run(db.fetch_existing_urls([it.source_url for it in items]))
 
             for item in items:
+                if limit is not None and stats["new"] >= limit:
+                    logger.info(f"已达到采集上限 limit={limit}，停止")
+                    break
                 if item.source_url in existing:
                     stats["skipped"] += 1
                     continue
@@ -260,7 +341,7 @@ class ZxxkCrawler:
                         self.download(item)
                         if item.local_path:
                             stats["downloaded"] += 1
-                    row_id = asyncio.run(db.insert_item(self.normalize(item)))
+                    row_id = db.run(db.insert_item(self.normalize(item)))
                     if row_id:
                         stats["new"] += 1
                         logger.info(f"入库成功 id={row_id}：{item.title[:40]}")

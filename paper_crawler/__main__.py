@@ -32,6 +32,9 @@ def main() -> None:
     parser.add_argument("--pages", type=int, help="最多翻页数")
     parser.add_argument("--no-download", action="store_true", help="只采元数据，不下载文件")
     parser.add_argument("--headless", action="store_true", help="无头模式（首次登录不要用）")
+    parser.add_argument("--limit", type=int, help="最多采集条数（测试阶段用，如 1）")
+    parser.add_argument("--no-login-wait", action="store_true",
+                        help="跳过登录检测（已确认浏览器登录态有效时用）")
     args = parser.parse_args()
 
     logger.remove()
@@ -42,10 +45,17 @@ def main() -> None:
     crawler = ZxxkCrawler(cfg)
     crawler.start_browser(headless=args.headless or None)
     try:
-        stats = crawler.run(keyword, max_pages=args.pages, download=not args.no_download)
-        logger.info(f"采集完成：新增 {stats['new']}，跳过 {stats['skipped']}，下载 {stats['downloaded']}，失败 {stats['failed']}")
+        stats = crawler.run(keyword, max_pages=args.pages, download=not args.no_download,
+                            limit=args.limit, skip_login_wait=args.no_login_wait)
+        logger.info(f"采集完成：新增 {stats['new']}，跳过 {stats['skipped']}，下载 {stats['downloaded']}，"
+                    f"失败 {stats['failed']}，关键词过滤 {stats['keyword_filtered']}")
     except KeyboardInterrupt:
         logger.warning("人工中断，已入库数据保留（断点续爬，重跑自动跳过）")
+    finally:
+        try:
+            db.run(db.dispose())
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
