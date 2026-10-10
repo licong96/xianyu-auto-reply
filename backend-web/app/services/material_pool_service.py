@@ -211,11 +211,16 @@ class MaterialPoolService:
     def _build_goods_title(self, row: MaterialPool) -> str:
         if row.title:
             return row.title
-        parts = [p for p in (row.school, row.year, row.grade) if p]
-        prefix = " ".join(parts)
+        # 普通卖家账号标题上限 30 字（鱼小铺 80 字），按最严约束截断；
+        # 学科网试卷名常见「精品解析：」等前缀对买家无意义，生成时剥掉
         name = row.paper_name or "试卷资料"
-        title = f"{prefix} {name}" if prefix else name
-        return title[:80]
+        for prefix in ("精品解析：", "精品解析:", "解析：", "解析:"):
+            if name.startswith(prefix):
+                name = name[len(prefix):]
+                break
+        base = "".join(p for p in (row.school, row.year, row.grade) if p)
+        title = f"{base}{name}" if base else name
+        return title[:30]
 
     def _build_goods_description(self, row: MaterialPool) -> str:
         if row.description:

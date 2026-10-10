@@ -30,6 +30,12 @@ dependencies = [
     "bcrypt==5.0.0",
     "playwright",
     "Pillow>=10.0.0",
+    # CUSTOM: 自动续售在 scheduler 内动态加载 backend-web 个人卖家发布器，需要 cv2
+    "opencv-python-headless>=4.10.0",
+    # CUSTOM: 个人卖家发布器链路依赖 xianyu_publish_video，需要 pycryptodome
+    "pycryptodome>=3.19.0",
+    # CUSTOM: 动态加载 backend-web app.services 包需要 httpx（AI 回复服务链）
+    "httpx>=0.26.0",
 ]
 
 [build-system]
