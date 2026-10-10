@@ -68,6 +68,12 @@ def _row_to_dict(row: MaterialPool) -> Dict[str, Any]:
         "description": row.description,
         "price": float(row.price) if row.price is not None else None,
         "cover_image": row.cover_image,
+        "platform_category_id": row.platform_category_id,
+        "platform_category_name": row.platform_category_name,
+        "platform_channel_category_id": row.platform_channel_category_id,
+        "platform_channel_category_name": row.platform_channel_category_name,
+        "platform_category_path": row.platform_category_path or [],
+        "platform_attributes": row.platform_attributes or [],
         "status": row.status,
         "account_id": row.account_id,
         "material_id": row.material_id,
@@ -253,8 +259,18 @@ class MaterialPoolService:
         item = (await self.session.execute(stmt)).scalar_one_or_none()
         return item.item_id if item else None
 
-    async def list_to_pan(self, user: User, pool_id: int, account_id: str) -> Dict[str, Any]:
-        """一键上架编排。成功返回 listed；失败原地停留 failed + error_message，可重试。"""
+    async def list_to_pan(
+        self,
+        user: User,
+        pool_id: int,
+        account_id: str,
+        category_data: Optional[dict] = None,
+    ) -> Dict[str, Any]:
+        """一键上架编排。成功返回 listed；失败原地停留 failed + error_message，可重试。
+
+        category_data: 前端选择的类目（一键上架弹窗内推荐/选择），会持久化到行上，
+        失败重试时无需重新选择。
+        """
         from app.services.auto_relist_rule_service import AutoRelistRuleService
         from app.services.card_service import CardService
         from app.services.product_publish_service import ProductMaterialService
@@ -283,6 +299,22 @@ class MaterialPoolService:
             if not account:
                 raise MaterialPoolError("选择的闲鱼账号不存在或无权使用")
 
+            # 持久化本次选择的类目（重试时复用）
+            if category_data:
+                row.platform_category_id = category_data.get("platform_category_id") or None
+                row.platform_category_name = category_data.get("platform_category_name") or None
+                row.platform_channel_category_id = category_data.get("platform_channel_category_id") or None
+                row.platform_channel_category_name = category_data.get("platform_channel_category_name") or None
+                row.platform_category_path = category_data.get("platform_category_path") or None
+                row.platform_attributes = category_data.get("platform_attributes") or None
+
+            platform_category_id = row.platform_category_id
+            platform_category_name = row.platform_category_name
+            platform_channel_category_id = row.platform_channel_category_id
+            platform_channel_category_name = row.platform_channel_category_name
+            if not platform_category_id and not platform_channel_category_id:
+                raise MaterialPoolError("缺少商品类目，请在上架弹窗中选择类目后再上架")
+
             # commit 会导致 ORM 属性过期，先把后续要用的值全部取到局部变量
             title = self._build_goods_title(row)
             description = self._build_goods_description(row)
@@ -293,11 +325,25 @@ class MaterialPoolService:
             item_id = row.item_id or None
             card_id = row.card_id
             relist_rule_id = row.relist_rule_id
+            platform_attributes = row.platform_attributes or []
+            platform_category_path = row.platform_category_path or []
 
             row.status = STATUS_LISTING
             row.account_id = account_id
             row.error_message = None
             await self.session.commit()
+
+            category_name = platform_channel_category_name or platform_category_name or "学习资料"
+            material_category_fields = {
+                "category": category_name,
+                "platform_category_id": platform_category_id,
+                "platform_category_name": platform_category_name,
+                "platform_channel_category_id": platform_channel_category_id,
+                "platform_channel_category_name": platform_channel_category_name,
+                "platform_category_path": platform_category_path,
+                "platform_attributes": platform_attributes,
+                "category_source": "recommendation" if (category_data or {}).get("category_source") != "manual" else "manual",
+            }
 
             # 1) 建商品素材（幂等：已建过则复用）
             if not material_id:
@@ -313,11 +359,11 @@ class MaterialPoolService:
                         "specifications": [],
                         "sku_rows": [],
                         "videos": [],
-                        "category": "学习资料",
                         "delivery_method": "express",
                         "shipping_method": "free",
                         "postage": 0,
                         "quantity": 1,
+                        **material_category_fields,
                     },
                 )
                 material_id = material.id
@@ -339,6 +385,7 @@ class MaterialPoolService:
                     description=description,
                     price=price,
                     images=[cover_image],
+                    **material_category_fields,
                 )
                 pub_svc = PublishExecutorService(self.session)
                 result = await pub_svc.publish_single(

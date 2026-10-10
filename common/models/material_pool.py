@@ -88,6 +88,13 @@ class MaterialPool(TimestampMixin, Base):
     description: Mapped[str | None] = mapped_column(Text, comment="商品描述")
     price: Mapped[float | None] = mapped_column(Numeric(10, 2), comment="售价（审核时人工填写）")
     cover_image: Mapped[str | None] = mapped_column(String(500), comment="封面图（PDF 首页转图）")
+    # 类目（一键上架时从闲鱼推荐接口选择后持久化，重试时复用）
+    platform_category_id: Mapped[str | None] = mapped_column(String(64), comment="平台类目ID")
+    platform_category_name: Mapped[str | None] = mapped_column(String(100), comment="平台类目名称")
+    platform_channel_category_id: Mapped[str | None] = mapped_column(String(64), comment="渠道类目ID")
+    platform_channel_category_name: Mapped[str | None] = mapped_column(String(100), comment="渠道类目名称")
+    platform_category_path: Mapped[list | None] = mapped_column(JSON, comment="类目路径（闲鱼返回）")
+    platform_attributes: Mapped[list | None] = mapped_column(JSON, comment="平台属性标签（闲鱼返回）")
 
     # ---- 流水线状态 ----
     status: Mapped[str] = mapped_column(

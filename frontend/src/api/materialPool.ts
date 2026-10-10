@@ -35,6 +35,12 @@ export interface MaterialPoolItem {
   description: string | null
   price: number | null
   cover_image: string | null
+  platform_category_id: string | null
+  platform_category_name: string | null
+  platform_channel_category_id: string | null
+  platform_channel_category_name: string | null
+  platform_category_path: Array<{ id: string; name: string }> | null
+  platform_attributes: Array<Record<string, unknown>> | null
   status: string
   account_id: string | null
   material_id: number | null
@@ -78,6 +84,18 @@ export interface MaterialPoolUpdatePayload {
   cover_image?: string
 }
 
+/** 一键上架选择的类目（与商品发布页类目推荐组件字段一致） */
+export interface MaterialPoolCategory {
+  category?: string
+  platform_category_id?: string
+  platform_category_name?: string
+  platform_channel_category_id?: string
+  platform_channel_category_name?: string
+  platform_category_path?: Array<{ id: string; name: string }>
+  platform_attributes?: Array<Record<string, unknown>>
+  category_source?: 'manual' | 'recommendation'
+}
+
 // ==================== 接口请求 ====================
 
 export const getMaterialPoolList = async (params: MaterialPoolListParams): Promise<ApiResponse<MaterialPoolListResult>> => {
@@ -110,12 +128,12 @@ export const uploadMaterialPoolToPan = async (id: number): Promise<ApiResponse<{
   return post<ApiResponse<{ id: number; pan_url: string; pan_code: string | null; share_id: string | null }>>(`${PREFIX}/${id}/upload-pan`, {})
 }
 
-export const listMaterialPoolGoods = async (id: number, accountId: string): Promise<ApiResponse<MaterialPoolItem>> => {
-  return post<ApiResponse<MaterialPoolItem>>(`${PREFIX}/${id}/list`, { account_id: accountId })
+export const listMaterialPoolGoods = async (id: number, accountId: string, category?: MaterialPoolCategory): Promise<ApiResponse<MaterialPoolItem>> => {
+  return post<ApiResponse<MaterialPoolItem>>(`${PREFIX}/${id}/list`, { account_id: accountId, category })
 }
 
-export const batchListMaterialPoolGoods = async (ids: number[], accountId: string): Promise<ApiResponse<{ results: Array<{ id: number; success: boolean; message?: string }>; success_count: number; total: number }>> => {
-  return post<ApiResponse<{ results: Array<{ id: number; success: boolean; message?: string }>; success_count: number; total: number }>>(`${PREFIX}/batch-list`, { ids, account_id: accountId })
+export const batchListMaterialPoolGoods = async (ids: number[], accountId: string, category?: MaterialPoolCategory): Promise<ApiResponse<{ results: Array<{ id: number; success: boolean; message?: string }>; success_count: number; total: number }>> => {
+  return post<ApiResponse<{ results: Array<{ id: number; success: boolean; message?: string }>; success_count: number; total: number }>>(`${PREFIX}/batch-list`, { ids, account_id: accountId, category })
 }
 
 /** 上传封面图（复用商品发布图片上传接口，返回 {本地路径, 预览URL}） */

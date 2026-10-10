@@ -2009,6 +2009,13 @@ class DatabaseInitializer:
         # CUSTOM: 资料池自动化流水线 - 存量表补字段
         "xy_material_pool": [
             ("redownload_url", "TEXT DEFAULT NULL COMMENT '源站重新下载地址（预留字段，暂未启用）'", "file_hash"),
+            # CUSTOM: 一键上架类目持久化（重试复用，免重新选择）
+            ("platform_category_id", "VARCHAR(64) DEFAULT NULL COMMENT '平台类目ID'", "cover_image"),
+            ("platform_category_name", "VARCHAR(100) DEFAULT NULL COMMENT '平台类目名称'", "cover_image"),
+            ("platform_channel_category_id", "VARCHAR(64) DEFAULT NULL COMMENT '渠道类目ID'", "cover_image"),
+            ("platform_channel_category_name", "VARCHAR(100) DEFAULT NULL COMMENT '渠道类目名称'", "cover_image"),
+            ("platform_category_path", "JSON DEFAULT NULL COMMENT '类目路径（闲鱼返回）'", "cover_image"),
+            ("platform_attributes", "JSON DEFAULT NULL COMMENT '平台属性标签（闲鱼返回）'", "cover_image"),
         ],
         "xy_keyword_rules": [
             ("location_name", "VARCHAR(255) DEFAULT NULL COMMENT '站外联系方式定位名称'", "image_url"),

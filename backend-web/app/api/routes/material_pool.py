@@ -47,13 +47,27 @@ class ApproveRequest(BaseModel):
     description: Optional[str] = None
 
 
+class CategorySelection(BaseModel):
+    """一键上架时选择的闲鱼类目（来自类目推荐组件）。"""
+    category: Optional[str] = Field(None, max_length=100)
+    platform_category_id: Optional[str] = Field(None, max_length=64)
+    platform_category_name: Optional[str] = Field(None, max_length=100)
+    platform_channel_category_id: Optional[str] = Field(None, max_length=64)
+    platform_channel_category_name: Optional[str] = Field(None, max_length=100)
+    platform_category_path: List[Dict[str, Any]] = Field(default_factory=list)
+    platform_attributes: List[Dict[str, Any]] = Field(default_factory=list)
+    category_source: str = Field("manual", pattern="^(manual|recommendation)$")
+
+
 class ListRequest(BaseModel):
     account_id: str = Field(..., min_length=1, description="闲鱼账号ID")
+    category: Optional[CategorySelection] = None
 
 
 class BatchListRequest(BaseModel):
     ids: List[int] = Field(..., min_length=1, max_length=50)
     account_id: str = Field(..., min_length=1)
+    category: Optional[CategorySelection] = None
 
 
 def _pool_error_resp(exc: MaterialPoolError) -> ApiResponse:
@@ -169,7 +183,12 @@ async def list_goods(
 ) -> Dict[str, Any]:
     svc = MaterialPoolService(session)
     try:
-        data = await svc.list_to_pan(current_user, pool_id, req.account_id)
+        data = await svc.list_to_pan(
+            current_user,
+            pool_id,
+            req.account_id,
+            category_data=req.category.model_dump(exclude_none=True) if req.category else None,
+        )
     except MaterialPoolError as exc:
         return _pool_error_resp(exc)
     except Exception as exc:  # noqa: BLE001
@@ -187,9 +206,10 @@ async def batch_list_goods(
     svc = MaterialPoolService(session)
     results = []
     success_count = 0
+    category_data = req.category.model_dump(exclude_none=True) if req.category else None
     for pool_id in req.ids:
         try:
-            data = await svc.list_to_pan(current_user, pool_id, req.account_id)
+            data = await svc.list_to_pan(current_user, pool_id, req.account_id, category_data=category_data)
             results.append({"id": pool_id, "success": True, "data": data})
             success_count += 1
         except MaterialPoolError as exc:

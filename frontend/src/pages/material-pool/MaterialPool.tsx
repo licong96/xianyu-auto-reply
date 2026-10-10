@@ -38,8 +38,11 @@ import {
   updateMaterialPool,
   uploadMaterialPoolCover,
   uploadMaterialPoolToPan,
+  type MaterialPoolCategory,
   type MaterialPoolItem,
 } from '@/api/materialPool'
+import { PlatformCategoryRecommender } from '@/pages/product-publish/PlatformCategoryRecommender'
+import type { PublishForm } from '@/pages/product-publish/publishTypes'
 import { ConfirmModal } from '@/components/common/ConfirmModal'
 import { Select } from '@/components/common/Select'
 import { PageLoading } from '@/components/common/Loading'
@@ -296,10 +299,10 @@ export function MaterialPool() {
     }
   }
 
-  const handleList = async (id: number, accountId: string) => {
+  const handleList = async (id: number, accountId: string, category?: MaterialPoolCategory) => {
     setSubmitting(true)
     try {
-      const res = await listMaterialPoolGoods(id, accountId)
+      const res = await listMaterialPoolGoods(id, accountId, category)
       if (res.success) {
         addToast({ type: 'success', message: '上架完成，商品已在售' })
         setListRow(null)
@@ -318,10 +321,10 @@ export function MaterialPool() {
     }
   }
 
-  const handleBatchList = async (accountId: string) => {
+  const handleBatchList = async (accountId: string, category?: MaterialPoolCategory) => {
     setSubmitting(true)
     try {
-      const res = await batchListMaterialPoolGoods(selectedIds, accountId)
+      const res = await batchListMaterialPoolGoods(selectedIds, accountId, category)
       if (res.success && res.data) {
         addToast({
           type: res.data.success_count > 0 ? 'success' : 'error',
@@ -675,7 +678,7 @@ export function MaterialPool() {
         accountOptions={accountOptions}
         submitting={submitting}
         onClose={() => setBatchListOpen(false)}
-        onSubmit={async (_id, accountId) => handleBatchList(accountId)}
+        onSubmit={async (_id, accountId, category) => handleBatchList(accountId, category)}
       />
 
       {/* 不售确认 */}
@@ -909,6 +912,44 @@ function ApproveModal({
 
 // ==================== 一键上架弹窗 ====================
 
+/** 与后端生成规则保持一致：学校 年份 年级 + 试卷名（截 80 字） */
+function buildGoodsTitle(row: MaterialPoolItem): string {
+  const parts = [row.school, row.year, row.grade].filter(Boolean).join(' ')
+  const title = parts ? `${parts} ${row.paper_name}` : row.paper_name
+  return title.slice(0, 80)
+}
+
+function buildEmptyCategoryForm(accountId: string, title: string, description: string): PublishForm {
+  return {
+    account_id: accountId,
+    title,
+    description,
+    price: '',
+    original_price: '',
+    category: '',
+    platform_category_id: '',
+    platform_category_name: '',
+    platform_channel_category_id: '',
+    platform_channel_category_name: '',
+    platform_leaf_id: '',
+    platform_tb_category_id: '',
+    platform_category_path: [],
+    platform_attributes: [],
+    category_source: 'manual',
+    videos: [],
+    quantity: 1,
+    address: '',
+    delivery_method: 'express',
+    shipping_method: 'free',
+    support_pickup: false,
+    postage: '0',
+    brand: '',
+    condition: '全新',
+    specifications: [],
+    sku_rows: [],
+  }
+}
+
 function ListModal({
   row,
   accounts,
@@ -922,39 +963,94 @@ function ListModal({
   accountOptions: Array<{ value: string; label: string; key: string }>
   submitting: boolean
   onClose: () => void
-  onSubmit: (id: number, accountId: string) => Promise<boolean>
+  onSubmit: (id: number, accountId: string, category?: MaterialPoolCategory) => Promise<boolean>
 }) {
+  const { addToast } = useUIStore()
   const [accountId, setAccountId] = useState('')
+  const [catForm, setCatForm] = useState<PublishForm>(() => buildEmptyCategoryForm('', '', ''))
+
+  // 打开弹窗时初始化：标题/描述用于类目推荐，已持久化的类目自动回填
+  useEffect(() => {
+    if (!row) return
+    const title = row.id ? buildGoodsTitle(row) : ''
+    const description = row.id
+      ? `【资料名称】${row.paper_name || '-'}${row.school ? `\n【学校】${row.school}` : ''}${row.year ? `\n【年份】${row.year}` : ''}${row.grade ? `\n【年级】${row.grade}` : ''}`
+      : '试卷资料 电子版'
+    setCatForm((current) => ({
+      ...buildEmptyCategoryForm(current.account_id, title, description),
+      ...(row.platform_category_id || row.platform_channel_category_id
+        ? {
+            category: row.platform_channel_category_name || row.platform_category_name || '',
+            platform_category_id: row.platform_category_id || '',
+            platform_category_name: row.platform_category_name || '',
+            platform_channel_category_id: row.platform_channel_category_id || '',
+            platform_channel_category_name: row.platform_channel_category_name || '',
+            platform_category_path: row.platform_category_path || [],
+            platform_attributes: (row.platform_attributes || []) as PublishForm['platform_attributes'],
+            category_source: 'recommendation' as const,
+          }
+        : {}),
+    }))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [row])
 
   useEffect(() => {
-    if (accounts.length === 1) setAccountId(accounts[0].id)
-  }, [accounts, row])
+    if (accounts.length === 1 && !accountId) setAccountId(accounts[0].id)
+  }, [accounts, accountId])
+
+  // 账号变化时同步给类目推荐组件，使其按该账号重新推荐
+  useEffect(() => {
+    setCatForm((current) => (current.account_id === accountId ? current : { ...current, account_id: accountId }))
+  }, [accountId])
+
+  const hasCategory = Boolean(catForm.platform_category_id || catForm.platform_channel_category_id)
 
   const handleSubmit = async () => {
-    if (!row) return
-    if (!accountId) {
+    if (!row || !accountId) return
+    if (!hasCategory) {
+      addToast({ type: 'error', message: '请先选择商品类目（下方推荐列表点选其一）' })
       return
     }
-    await onSubmit(row.id, accountId)
+    const category: MaterialPoolCategory = {
+      category: catForm.category,
+      platform_category_id: catForm.platform_category_id,
+      platform_category_name: catForm.platform_category_name,
+      platform_channel_category_id: catForm.platform_channel_category_id,
+      platform_channel_category_name: catForm.platform_channel_category_name,
+      platform_category_path: catForm.platform_category_path,
+      platform_attributes: catForm.platform_attributes as unknown as Array<Record<string, unknown>>,
+      category_source: catForm.category_source,
+    }
+    await onSubmit(row.id, accountId, category)
   }
 
   return (
-    <ModalShell isOpen={row !== null} title="一键上架到闲鱼" onClose={onClose}>
+    <ModalShell isOpen={row !== null} title="一键上架到闲鱼" onClose={onClose} width="max-w-2xl">
       <div className="space-y-4">
         <p className="text-sm text-slate-600 dark:text-slate-400 break-all">
           「{row?.paper_name}」
         </p>
         <div className="rounded-lg bg-slate-50 dark:bg-slate-700/50 p-3 text-xs text-slate-500 dark:text-slate-400 space-y-1">
           <p>上架流程：创建商品素材 → 发布到闲鱼 → 创建网盘卡券并绑定 → 开启自动续售。</p>
-          <p>失败后可在「失败」状态原地重试，已完成的步骤不会重复执行。</p>
+          <p>类目选择后会被记住，失败重试无需重新选择。</p>
         </div>
         <div>
           <label className="input-label">选择闲鱼账号</label>
           <Select value={accountId} onChange={setAccountId} options={accountOptions} placeholder="请选择账号" />
         </div>
+        <div>
+          <label className="input-label">商品类目（根据标题自动推荐，点选确认）</label>
+          <div className="mt-1 rounded-xl border border-slate-200 dark:border-slate-700 p-3">
+            <PlatformCategoryRecommender form={catForm} onChange={(patch) => setCatForm((current) => ({ ...current, ...patch }))} />
+          </div>
+        </div>
         <div className="flex justify-end gap-3 pt-2">
           <button onClick={onClose} className="btn-ios-secondary">取消</button>
-          <button onClick={handleSubmit} disabled={submitting || !accountId} className="btn-ios-primary inline-flex items-center gap-2">
+          <button
+            onClick={handleSubmit}
+            disabled={submitting || !accountId}
+            className="btn-ios-primary inline-flex items-center gap-2"
+          >
             {submitting && <Loader2 className="w-4 h-4 animate-spin" />}
             确认上架
           </button>
