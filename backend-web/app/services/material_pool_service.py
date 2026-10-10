@@ -271,9 +271,11 @@ class MaterialPoolService:
                 logger.info(f"[material-pool] 已有本地文件，跳过下载直接上传：pool={pool_id}")
 
             await upload_pool_row_to_pan(pool_id)
-            # 上传在独立会话提交，本请求会话的 identity map 里是旧对象，先过期再重查
-            self.session.expire_all()
-            return _row_to_dict(await self._get_row(user, pool_id))
+            # 上传在独立会话提交，本会话里的 row 是旧状态；refresh(row) 异步安全地强制重查。
+            # 不要 expire_all()：它会把 current_user 等会话内全部对象过期，
+            # 之后同步读属性（如 _row_to_dict）会触发 MissingGreenlet
+            await self.session.refresh(row)
+            return _row_to_dict(row)
         except Exception as exc:  # noqa: BLE001 - 统一标记 failed，保证状态落库后可原地重试
             message = str(exc)[:1000]
             logger.warning(f"[material-pool] 下载/上传失败：pool={pool_id} - {message}")
