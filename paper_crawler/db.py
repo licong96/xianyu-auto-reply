@@ -80,6 +80,19 @@ async def insert_item(item: dict) -> int:
         return row.id
 
 
+async def fetch_pool_for_download(pool_id: int) -> dict | None:
+    """取一条资料池记录的下载所需字段（download 子进程用）。"""
+    async with async_session_maker() as s:
+        row = await s.get(MaterialPool, pool_id)
+        if not row or row.is_deleted:
+            return None
+        return {
+            "paper_name": row.paper_name,
+            "source_url": row.source_url,
+            "local_path": row.local_path,
+        }
+
+
 async def set_local_file(pool_id: int, local_path: str, file_size: int, file_hash: str) -> None:
     """补写本地文件信息（先采元数据、后补下载的场景）。"""
     async with async_session_maker() as s:

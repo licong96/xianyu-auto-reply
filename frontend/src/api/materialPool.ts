@@ -128,6 +128,11 @@ export const uploadMaterialPoolToPan = async (id: number): Promise<ApiResponse<{
   return post<ApiResponse<{ id: number; pan_url: string; pan_code: string | null; share_id: string | null }>>(`${PREFIX}/${id}/upload-pan`, {})
 }
 
+/** 触发浏览器接管下载该资料，成功后自动上传网盘并生成分享链接（全程 1-5 分钟，放大超时） */
+export const downloadMaterialPoolFile = async (id: number): Promise<ApiResponse<MaterialPoolItem>> => {
+  return post<ApiResponse<MaterialPoolItem>>(`${PREFIX}/${id}/download`, {}, { timeout: 600000 })
+}
+
 export const listMaterialPoolGoods = async (id: number, accountId: string, category?: MaterialPoolCategory): Promise<ApiResponse<MaterialPoolItem>> => {
   return post<ApiResponse<MaterialPoolItem>>(`${PREFIX}/${id}/list`, { account_id: accountId, category })
 }

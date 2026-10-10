@@ -1,18 +1,23 @@
 """
 学科网（zxxk.com）试卷爬虫 - DrissionPage 实现
 
+职责划分（2026-10-10 重构）：
+- 本模块【只做采集】：启动/接管浏览器（登录态持久化）→ 搜索列表 → 详情页补全日期
+  → 元数据写入 xy_material_pool（status=crawled，source_url 即详情页地址）
+- 下载【独立拆分】到 downloader.py：由管理后台资料池页「下载试卷」按钮触发，
+  人工判断值得下载的资料后才执行浏览器接管下载（python -m paper_crawler download --id N）
+
 流程：
 1. 启动/接管浏览器（独立端口 + 独立用户目录，登录态持久化）
 2. 未登录则等待人工在浏览器中完成登录（会员账号）
 3. 搜索关键词翻页，解析列表：标题/属性标签/发布日/下载量
-4. 逐条进详情页补全完整日期，已登录态下点击下载 PDF
-5. md5 去重后写入 xy_material_pool（status=crawled）
+4. 逐条进详情页补全完整日期，保存详情页地址（source_url）入库
 
 已实测校准（2026-10-10）：
 - 列表页 SSR 可直接解析：.mid-tit a.title / .attribute-spot / .feature
 - 翻页 URL：/doc/page-N.html?kw=关键词
 - 详情页有反爬 JS 挑战（设置 cookie 后自刷新），必须走真实浏览器
-- 下载按钮选择器依赖登录态页面结构，如失效请看 README「下载校准」
+- 下载按钮选择器（#btnSoftDownload + layui 二次确认）的实测结论见 downloader.py
 """
 from __future__ import annotations
 
@@ -301,16 +306,15 @@ class ZxxkCrawler:
             "file_hash": item.file_hash,
         }
 
-    # ---------- 主流程 ----------
+    # ---------- 主流程（仅采集元数据，不下载） ----------
 
-    def run(self, keyword: str, max_pages: int | None = None, download: bool | None = None,
+    def run(self, keyword: str, max_pages: int | None = None,
             limit: int | None = None, skip_login_wait: bool = False) -> dict:
         crawl_cfg = self.cfg["crawl"]
         max_pages = max_pages or int(crawl_cfg.get("max_pages", 3))
-        download = bool(crawl_cfg.get("download", True)) if download is None else download
         interval = float(crawl_cfg.get("interval_seconds", 2))
 
-        stats = {"new": 0, "skipped": 0, "failed": 0, "downloaded": 0, "keyword_filtered": 0}
+        stats = {"new": 0, "skipped": 0, "failed": 0, "keyword_filtered": 0}
         self.wait_for_login(skip=skip_login_wait)
 
         for page in range(1, max_pages + 1):
@@ -339,11 +343,7 @@ class ZxxkCrawler:
                     stats["skipped"] += 1
                     continue
                 try:
-                    self.fill_detail(item)   # 详情页已停留，下载直接复用该页面
-                    if download:
-                        self.download(item)
-                        if item.local_path:
-                            stats["downloaded"] += 1
+                    self.fill_detail(item)   # 详情页补全完整发布日期
                     row_id = db.run(db.insert_item(self.normalize(item)))
                     if row_id:
                         stats["new"] += 1

@@ -16,8 +16,7 @@ crawl:
   max_pages: 3            # 单次运行最多翻页数（每页约 30-37 条）
   interval_seconds: 2     # 条与条之间的间隔，反爬缓冲
   page_wait_seconds: 3    # 翻页后等待渲染
-  download: true          # 是否下载 PDF（false 则只采元数据，可后续补下载）
-  download_dir: "data/papers"  # 资料最终保存目录（相对项目根目录）
+  download_dir: "data/papers"  # 资料最终保存目录（相对项目根目录，下载子命令使用）
   # zxxk 下载实际落盘位置（Chrome 下载目录，学科网下载会保存到这里）
   zxxk_download_dir: "~/Downloads/zxxk"
   download_timeout: 120   # 单文件下载等待秒数

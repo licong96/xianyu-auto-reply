@@ -12,6 +12,9 @@
 """
 from __future__ import annotations
 
+import asyncio
+import json
+import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -36,6 +39,39 @@ EDITABLE_FIELDS = ("paper_name", "school", "year", "grade", "tags", "title", "de
 
 # 一键上架前必须满足的状态
 LISTABLE_STATUSES = (STATUS_APPROVED, STATUS_FAILED)
+
+# 正在执行「下载+上传」的记录（防重复点击；本机单人使用，进程内锁足够）
+_running_downloads: set[int] = set()
+
+
+def _run_crawler_download_subprocess(pool_id: int, timeout: int = 420) -> dict:
+    """调用 paper_crawler 子进程接管浏览器下载单条试卷，返回下载结果 dict。
+
+    DrissionPage 只装在爬虫独立 venv，backend-web 通过子进程隔离调用；
+    子进程最后一行输出 RESULT_JSON: 前缀的结果，过程日志在 stderr。
+    """
+    root = Path(__file__).resolve().parents[3]  # backend-web/app/services/xxx.py -> 项目根
+    py = root / "paper_crawler" / ".venv" / "bin" / "python"
+    if not py.exists():
+        raise MaterialPoolError(f"爬虫虚拟环境不存在：{py}")
+    cmd = [str(py), "-m", "paper_crawler", "download", "--id", str(pool_id)]
+    logger.info(f"[material-pool] 触发下载子进程：pool={pool_id}")
+    try:
+        proc = subprocess.run(cmd, cwd=str(root), capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        raise MaterialPoolError(f"下载超时（{timeout // 60} 分钟）：请检查爬虫浏览器状态后重试") from exc
+
+    result_line = next(
+        (ln for ln in reversed((proc.stdout or "").splitlines()) if ln.startswith("RESULT_JSON:")),
+        None,
+    )
+    if proc.returncode != 0 or not result_line:
+        tail = "\n".join((proc.stderr or "").splitlines()[-15:])
+        raise MaterialPoolError(f"下载失败：{tail[-500:] or '子进程无输出（检查爬虫浏览器是否已登录学科网）'}")
+    payload = json.loads(result_line[len("RESULT_JSON:"):])
+    if not payload.get("success"):
+        raise MaterialPoolError(payload.get("message") or "下载失败")
+    return payload["data"]
 
 
 class MaterialPoolError(RuntimeError):
@@ -205,6 +241,58 @@ class MaterialPoolService:
         # upload_pool_row_to_pan 自带幂等（已有 pan_url 拒绝重复上传）
         result = await upload_pool_row_to_pan(pool_id)
         return result
+
+    # ---------- 触发下载（浏览器接管）+ 自动上传网盘 ----------
+
+    async def download_and_upload(self, user: User, pool_id: int) -> Dict[str, Any]:
+        """资料池「下载试卷」按钮全链路：接管浏览器下载 -> 自动上传夸克网盘 -> 生成分享链接。
+
+        - 幂等：已有本地文件则跳过下载直接进入上传；已有分享链接则拒绝
+        - 并发：同一记录防重复点击（进程内集合）
+        - 失败：状态置 failed + error_message，可原地重试（重试时已有文件则跳过下载）
+        - 成功：upload_pool_row_to_pan 把状态置 pending（待审核）
+        """
+        from app.services.pan.quark_pan_client import upload_pool_row_to_pan
+
+        row = await self._get_row(user, pool_id)
+        if pool_id in _running_downloads:
+            raise MaterialPoolError("该资料正在下载中，请勿重复点击")
+        if row.pan_url:
+            raise MaterialPoolError(f"已生成网盘分享链接（{row.pan_url}），无需再下载")
+        if not row.source_url:
+            raise MaterialPoolError("缺少详情页地址（source_url），无法下载")
+
+        _running_downloads.add(pool_id)
+        try:
+            if not (row.local_path and Path(row.local_path).exists()):
+                # 子进程内是 DrissionPage 同步流程（含多次等待），放线程池避免阻塞事件循环
+                await asyncio.to_thread(_run_crawler_download_subprocess, pool_id)
+            else:
+                logger.info(f"[material-pool] 已有本地文件，跳过下载直接上传：pool={pool_id}")
+
+            await upload_pool_row_to_pan(pool_id)
+            # 上传在独立会话提交，本请求会话的 identity map 里是旧对象，先过期再重查
+            await self.session.expire_all()
+            return _row_to_dict(await self._get_row(user, pool_id))
+        except Exception as exc:  # noqa: BLE001 - 统一标记 failed，保证状态落库后可原地重试
+            message = str(exc)[:1000]
+            logger.warning(f"[material-pool] 下载/上传失败：pool={pool_id} - {message}")
+            try:
+                await self.session.execute(
+                    update(MaterialPool)
+                    .where(MaterialPool.id == pool_id)
+                    .values(
+                        status=STATUS_FAILED,
+                        retry_count=MaterialPool.retry_count + 1,
+                        error_message=message,
+                    )
+                )
+                await self.session.commit()
+            except Exception:  # noqa: BLE001 - 标记失败本身不阻断主异常
+                logger.exception(f"[material-pool] 失败状态落库异常：pool={pool_id}")
+            raise MaterialPoolError(message) from exc
+        finally:
+            _running_downloads.discard(pool_id)
 
     # ---------- 一键上架 ----------
 

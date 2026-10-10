@@ -17,6 +17,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
+  Download,
   ExternalLink,
   Loader2,
   Pencil,
@@ -32,6 +33,7 @@ import {
   approveMaterialPool,
   batchListMaterialPoolGoods,
   coverImageToUrl,
+  downloadMaterialPoolFile,
   getMaterialPoolList,
   listMaterialPoolGoods,
   rejectMaterialPool,
@@ -177,6 +179,8 @@ export function MaterialPool() {
   const [batchListOpen, setBatchListOpen] = useState(false)
   const [rejectTarget, setRejectTarget] = useState<MaterialPoolItem | null>(null)
   const [uploadTarget, setUploadTarget] = useState<MaterialPoolItem | null>(null)
+  const [downloadTarget, setDownloadTarget] = useState<MaterialPoolItem | null>(null)
+  const [downloadingId, setDownloadingId] = useState<number | null>(null)
 
   const accountOptions = useMemo(
     () => [
@@ -299,6 +303,28 @@ export function MaterialPool() {
     }
   }
 
+  const handleDownload = async () => {
+    if (!downloadTarget) return
+    setSubmitting(true)
+    setDownloadingId(downloadTarget.id)
+    try {
+      const res = await downloadMaterialPoolFile(downloadTarget.id)
+      if (res.success) {
+        addToast({ type: 'success', message: '下载完成，已上传网盘并生成分享链接' })
+        setDownloadTarget(null)
+      } else {
+        addToast({ type: 'error', message: res.message || '下载失败' })
+      }
+      loadRows()
+    } catch (error) {
+      addToast({ type: 'error', message: getApiErrorMessage(error, '下载失败') })
+      loadRows()
+    } finally {
+      setSubmitting(false)
+      setDownloadingId(null)
+    }
+  }
+
   const handleList = async (id: number, accountId: string, category?: MaterialPoolCategory) => {
     setSubmitting(true)
     try {
@@ -356,7 +382,11 @@ export function MaterialPool() {
     }
   }
 
-  const canUpload = (row: MaterialPoolItem) => !row.pan_url && ['crawled', 'uploaded', 'failed'].includes(row.status)
+  // 有本地文件 + 未生成分享链接时才允许手动补传网盘（正常流程由「下载试卷」自动完成）
+  const canUpload = (row: MaterialPoolItem) =>
+    Boolean(row.local_path) && !row.pan_url && ['crawled', 'uploaded', 'failed'].includes(row.status)
+  // 无本地文件且未上传网盘：可触发「下载试卷」（接管浏览器下载 + 自动上传网盘）
+  const canDownloadFile = (row: MaterialPoolItem) => !row.local_path && !row.pan_url
   const canApprove = (row: MaterialPoolItem) =>
     ['pending', 'crawled', 'uploaded', 'failed', 'rejected'].includes(row.status)
   const canReject = (row: MaterialPoolItem) => !['listed', 'rejected'].includes(row.status)
@@ -372,7 +402,7 @@ export function MaterialPool() {
       <div className="page-header flex-between">
         <div>
           <h1 className="page-title">资料池</h1>
-          <p className="page-description">爬虫采集的试卷资料：审核、上传网盘、一键上架到闲鱼</p>
+          <p className="page-description">爬虫采集的试卷资料：下载（自动传网盘）、审核、一键上架到闲鱼</p>
         </div>
         <button onClick={() => loadRows()} className="btn-ios-secondary" disabled={loading}>
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
@@ -545,6 +575,20 @@ export function MaterialPool() {
                       <td className="align-top whitespace-nowrap text-xs">{formatDateTime(row.created_at)}</td>
                       <td className="align-top whitespace-nowrap">
                         <div className="flex flex-col gap-1">
+                          {canDownloadFile(row) && (
+                            <button
+                              onClick={() => setDownloadTarget(row)}
+                              disabled={downloadingId !== null}
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs bg-indigo-50 text-indigo-600 hover:bg-indigo-100 dark:bg-indigo-900/30 dark:text-indigo-400 disabled:opacity-50"
+                            >
+                              {downloadingId === row.id ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <Download className="w-3.5 h-3.5" />
+                              )}
+                              {downloadingId === row.id ? '下载中...' : '下载试卷'}
+                            </button>
+                          )}
                           {canUpload(row) && (
                             <button
                               onClick={() => setUploadTarget(row)}
@@ -703,6 +747,18 @@ export function MaterialPool() {
         loading={submitting}
         onConfirm={handleUploadPan}
         onCancel={() => setUploadTarget(null)}
+      />
+
+      {/* 下载试卷确认 */}
+      <ConfirmModal
+        isOpen={downloadTarget !== null}
+        title="下载试卷"
+        message={`将接管本地浏览器打开详情页下载「${downloadTarget?.paper_name || ''}」，成功后自动上传夸克网盘并生成分享链接。请确保爬虫浏览器（端口 9333）已登录学科网会员；全程约 1-5 分钟，期间请勿重复点击。`}
+        confirmText="开始下载"
+        type="info"
+        loading={submitting}
+        onConfirm={handleDownload}
+        onCancel={() => setDownloadTarget(null)}
       />
     </div>
   )

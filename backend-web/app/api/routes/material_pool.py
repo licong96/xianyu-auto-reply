@@ -8,8 +8,9 @@
 4. POST   /material-pool/{id}/approve      审核通过（可顺带定价）
 5. POST   /material-pool/{id}/reject       标记不售
 6. POST   /material-pool/{id}/upload-pan   触发上传夸克网盘并生成分享链接
-7. POST   /material-pool/{id}/list         一键上架（body: account_id）
-8. POST   /material-pool/batch-list        批量上架（body: ids + account_id）
+7. POST   /material-pool/{id}/download     触发浏览器接管下载，成功后自动上传网盘
+8. POST   /material-pool/{id}/list         一键上架（body: account_id）
+9. POST   /material-pool/batch-list        批量上架（body: ids + account_id）
 
 # CUSTOM: 资料池自动化流水线（新增文件，合并作者更新零冲突）
 """
@@ -172,6 +173,26 @@ async def upload_pan(
     except Exception as exc:  # noqa: BLE001 - PanError 等统一兜底
         return ApiResponse(success=False, message=f"上传网盘失败：{exc}", data=None)
     return ApiResponse(success=True, message="上传成功，分享链接已生成", data=data)
+
+
+@router.post("/{pool_id}/download", response_model=ApiResponse)
+async def download_pool(
+    pool_id: int,
+    current_user: User = Depends(get_current_active_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> Dict[str, Any]:
+    """触发浏览器接管下载该资料，成功后自动上传夸克网盘并生成分享链接。
+
+    耗时较长（接管浏览器 + 下载 + 网盘上传，约 1-5 分钟），前端需放大请求超时。
+    """
+    svc = MaterialPoolService(session)
+    try:
+        data = await svc.download_and_upload(current_user, pool_id)
+    except MaterialPoolError as exc:
+        return _pool_error_resp(exc)
+    except Exception as exc:  # noqa: BLE001
+        return ApiResponse(success=False, message=f"下载失败：{exc}", data=None)
+    return ApiResponse(success=True, message="下载完成，已上传网盘并生成分享链接", data=data)
 
 
 @router.post("/{pool_id}/list", response_model=ApiResponse)
