@@ -1440,6 +1440,53 @@ class DatabaseInitializer:
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='商品素材库表';
         """,
 
+        # CUSTOM: 资料池自动化流水线 - 资料池表（新增表，合并作者更新零冲突）
+        "xy_material_pool": """
+            CREATE TABLE IF NOT EXISTS xy_material_pool (
+                id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+                owner_id BIGINT NOT NULL COMMENT '所属用户ID（爬虫默认写管理员）',
+                paper_name VARCHAR(300) NOT NULL COMMENT '试卷名字',
+                school VARCHAR(200) DEFAULT NULL COMMENT '学校',
+                year VARCHAR(20) DEFAULT NULL COMMENT '年份（如 2025、2025-2026）',
+                grade VARCHAR(50) DEFAULT NULL COMMENT '年级',
+                tags JSON DEFAULT NULL COMMENT '自定义标签数组，如 [数学, 期中, 含答案]',
+                published_at DATETIME DEFAULT NULL COMMENT '源站发布时间',
+                view_count INT NOT NULL DEFAULT 0 COMMENT '源站浏览量（采集时快照）',
+                download_count INT NOT NULL DEFAULT 0 COMMENT '源站下载量（采集时快照）',
+                source_url VARCHAR(1000) NOT NULL COMMENT '来源链接（唯一，防重）',
+                source_type VARCHAR(50) NOT NULL DEFAULT 'zxxk' COMMENT '采集渠道：zxxk-学科网',
+                local_path VARCHAR(500) DEFAULT NULL COMMENT '本地文件路径',
+                file_size BIGINT DEFAULT NULL COMMENT '文件大小（字节）',
+                file_hash CHAR(32) DEFAULT NULL COMMENT '文件 md5（二次去重）',
+                pan_type VARCHAR(20) NOT NULL DEFAULT 'quark' COMMENT '网盘类型',
+                pan_path VARCHAR(500) DEFAULT NULL COMMENT '网盘远端路径，如 /资料池/<学校>/<年份>/xx.pdf',
+                pan_url VARCHAR(500) DEFAULT NULL COMMENT '网盘分享链接',
+                pan_code VARCHAR(20) DEFAULT NULL COMMENT '提取码（无则空）',
+                share_id VARCHAR(100) DEFAULT NULL COMMENT '分享 ID（撤销/巡检用）',
+                share_expire_at DATETIME DEFAULT NULL COMMENT '分享有效期',
+                title VARCHAR(200) DEFAULT NULL COMMENT '商品标题（上架生成：学校+年份+年级+试卷名）',
+                description TEXT DEFAULT NULL COMMENT '商品描述',
+                price DECIMAL(10,2) DEFAULT NULL COMMENT '售价（审核时人工填写）',
+                cover_image VARCHAR(500) DEFAULT NULL COMMENT '封面图（PDF 首页转图）',
+                status VARCHAR(20) NOT NULL DEFAULT 'crawled' COMMENT '状态机：crawled/uploaded/pending/approved/listing/listed/rejected/failed',
+                account_id VARCHAR(80) DEFAULT NULL COMMENT '上架目标闲鱼账号（xy_accounts.account_id）',
+                material_id BIGINT DEFAULT NULL COMMENT '回填：素材库 ID（xy_product_materials）',
+                item_id VARCHAR(64) DEFAULT NULL COMMENT '回填：闲鱼商品 ID',
+                card_id BIGINT DEFAULT NULL COMMENT '回填：卡券 ID',
+                relist_rule_id BIGINT DEFAULT NULL COMMENT '回填：自动续售规则 ID',
+                error_message TEXT DEFAULT NULL COMMENT '失败原因',
+                retry_count INT NOT NULL DEFAULT 0 COMMENT '重试次数',
+                is_deleted TINYINT(1) NOT NULL DEFAULT 0 COMMENT '软删除',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+                UNIQUE KEY uq_material_pool_source_url (source_url(255)),
+                INDEX idx_mp_owner_status (owner_id, status),
+                INDEX idx_mp_school_year_grade (school, year, grade),
+                INDEX idx_mp_file_hash (file_hash),
+                INDEX idx_mp_status (status)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='资料池表 - 资料池自动化流水线';
+        """,
+
         # 38.1 定时求小红花执行日志表
         "xy_scheduled_red_flower_log": """
             CREATE TABLE IF NOT EXISTS `xy_scheduled_red_flower_log` (

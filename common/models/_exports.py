@@ -42,6 +42,8 @@ from common.models.dock_code_binding import DockCodeBinding
 from common.models.agent_order import AgentOrder
 from common.models.settlement_record import SettlementRecord
 from common.models.product_material import ProductMaterial
+# CUSTOM: 资料池自动化流水线（新增表，合并作者更新零冲突）
+from common.models.material_pool import MaterialPool
 from common.models.publish_log import PublishLog
 from common.models.publish_address import PublishAddress
 from common.models.user_publish_address import UserPublishAddress
