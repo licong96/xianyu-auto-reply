@@ -118,16 +118,25 @@ export const batchListMaterialPoolGoods = async (ids: number[], accountId: strin
   return post<ApiResponse<{ results: Array<{ id: number; success: boolean; message?: string }>; success_count: number; total: number }>>(`${PREFIX}/batch-list`, { ids, account_id: accountId })
 }
 
-/** 上传封面图（复用通用图片上传接口，返回图片 URL） */
-export const uploadMaterialPoolCover = async (file: File): Promise<string> => {
+/** 上传封面图（复用商品发布图片上传接口，返回 {本地路径, 预览URL}） */
+export const uploadMaterialPoolCover = async (file: File): Promise<{ path: string; url: string }> => {
   const formData = new FormData()
-  formData.append('image', file)
-  const res = await post<ApiResponse<{ url?: string; image_url?: string }>>('/api/v1/upload/upload-image', formData, {
+  formData.append('files', file)
+  const res = await post<ApiResponse<{ paths?: string[]; urls?: string[] }>>('/api/v1/product-publish/upload/images', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   })
-  const url = res.data?.url || res.data?.image_url
-  if (!res.success || !url) {
+  const path = res.data?.paths?.[0]
+  const url = res.data?.urls?.[0]
+  if (!res.success || !path) {
     throw new Error(res.message || '封面上传失败')
   }
-  return url
+  return { path, url: url || '' }
+}
+
+/** 把 cover_image 存储值转成可预览的 URL（绝对路径或 /static/ 相对路径均可） */
+export const coverImageToUrl = (value: string | null | undefined): string => {
+  if (!value) return ''
+  if (value.startsWith('/static/')) return value
+  const filename = value.split('/').pop()
+  return filename ? `/static/uploads/products/${filename}` : value
 }

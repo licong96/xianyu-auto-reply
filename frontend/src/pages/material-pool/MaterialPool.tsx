@@ -31,6 +31,7 @@ import { getAccountDetails } from '@/api/accounts'
 import {
   approveMaterialPool,
   batchListMaterialPoolGoods,
+  coverImageToUrl,
   getMaterialPoolList,
   listMaterialPoolGoods,
   rejectMaterialPool,
@@ -742,8 +743,8 @@ function EditModal({
     if (!file) return
     setUploading(true)
     try {
-      const url = await uploadMaterialPoolCover(file)
-      setCoverImage(url)
+      const { path } = await uploadMaterialPoolCover(file)
+      setCoverImage(path)
       addToast({ type: 'success', message: '封面上传成功' })
     } catch (error) {
       addToast({ type: 'error', message: getApiErrorMessage(error, '封面上传失败') })
@@ -826,7 +827,7 @@ function EditModal({
         </div>
         {coverImage && (
           <div className="flex items-center gap-3">
-            <img src={coverImage} alt="封面预览" className="w-24 h-24 object-cover rounded-lg border border-slate-200 dark:border-slate-700" />
+            <img src={coverImageToUrl(coverImage)} alt="封面预览" className="w-24 h-24 object-cover rounded-lg border border-slate-200 dark:border-slate-700" />
             <button onClick={() => setCoverImage('')} className="text-xs text-red-500 hover:underline">移除封面</button>
           </div>
         )}
