@@ -1,0 +1,34 @@
+# 学科网（zxxk.com）试卷爬虫配置
+# 用法见 README.md
+
+# 浏览器端口：复用该端口的浏览器即可复用登录态（先启动爬虫，浏览器弹出后人工登录一次）
+browser:
+  port: 9333
+  user_data_dir: "browser_data/zxxk"   # 相对项目根目录，持久化登录态
+  headless: false                      # 登录与下载建议有头模式，便于人工处理验证
+  login_url: "https://www.zxxk.com/"
+  # 判断已登录的元素（CSS），找不到视为未登录
+  logged_in_selector: ".user-name, .header-user, a[href*='user']"
+
+# 采集行为
+crawl:
+  default_keyword: "学军中学"
+  max_pages: 3            # 单次运行最多翻页数（每页约 30-37 条）
+  interval_seconds: 2     # 条与条之间的间隔，反爬缓冲
+  page_wait_seconds: 3    # 翻页后等待渲染
+  download: true          # 是否下载 PDF（false 则只采元数据，可后续补下载）
+  download_dir: "data/papers"  # 相对项目根目录
+  download_timeout: 120   # 单文件下载等待秒数
+
+# 学校识别：在标题中匹配这些关键词填入 school 字段（按优先级顺序）
+school_keywords:
+  - 学军中学
+  - 镇海中学
+  - 杭二中
+  - 杭州二中
+  - 温州中学
+  - 金华一中
+  - 绍兴一中
+
+# 入库归属：资料池行归属的管理员用户 ID（xy_users 表，默认管理员通常为 1）
+owner_id: 1

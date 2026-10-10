@@ -1,0 +1,11 @@
+# 资料池爬虫独立依赖（paper_crawler 专用虚拟环境，不污染主项目）
+# 安装：cd paper_crawler && python3 -m venv .venv && .venv/bin/pip install -r requirements-crawler.txt
+
+DrissionPage>=4.0.0
+SQLAlchemy>=2.0
+asyncmy>=0.2.16
+loguru>=0.7
+pydantic>=2.0
+pydantic-settings>=2.0
+PyYAML>=6.0
+greenlet>=3.0
