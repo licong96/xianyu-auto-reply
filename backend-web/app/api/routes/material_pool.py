@@ -82,6 +82,7 @@ async def list_pools(
     year: Optional[str] = Query(None),
     grade: Optional[str] = Query(None),
     keyword: Optional[str] = Query(None),
+    source_type: Optional[str] = Query(None, description="来源筛选：zxxk=学科网爬虫，quark-manual=网盘直选"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     current_user: User = Depends(get_current_active_user),
@@ -97,6 +98,7 @@ async def list_pools(
         year=year,
         grade=grade,
         keyword=keyword,
+        source_type=source_type,
     )
     return ApiResponse(success=True, message="ok", data=data)
 

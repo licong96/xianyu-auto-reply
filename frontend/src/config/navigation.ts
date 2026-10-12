@@ -10,6 +10,7 @@ import {
   FileText,
   Filter,
   Flower2,
+  FolderOpen,
   Image,
   Info,
   Key,
@@ -117,6 +118,8 @@ export const mainNavItems: NavEntry[] = [
   },
   // CUSTOM: 资料池自动化流水线
   { key: 'material-pool', icon: Database, label: '资料池', path: '/material-pool' },
+  // CUSTOM: 网盘浏览与直选上架
+  { key: 'pan-browser', icon: FolderOpen, label: '网盘管理', path: '/pan-browser' },
   {
     key: 'product-monitor',
     icon: PackageSearch,

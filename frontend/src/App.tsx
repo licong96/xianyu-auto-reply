@@ -69,6 +69,8 @@ const PublishAddresses = React.lazy(() => import('@/pages/product-publish/Publis
 const PublishLogs = React.lazy(() => import('@/pages/product-publish/PublishLogs').then(m => ({ default: m.PublishLogs })))
 // CUSTOM: 资料池自动化流水线
 const MaterialPool = React.lazy(() => import('@/pages/material-pool/MaterialPool').then(m => ({ default: m.MaterialPool })))
+// CUSTOM: 网盘浏览与直选上架
+const PanBrowser = React.lazy(() => import('@/pages/pan-browser/PanBrowser').then(m => ({ default: m.PanBrowser })))
 const ListingMonitor = React.lazy(() => import('@/pages/product-monitor/ListingMonitor').then(m => ({ default: m.ListingMonitor })))
 const MonitorOverview = React.lazy(() => import('@/pages/product-monitor/MonitorOverview').then(m => ({ default: m.MonitorOverview })))
 const MonitorCategory = React.lazy(() => import('@/pages/product-monitor/MonitorCategory').then(m => ({ default: m.MonitorCategory })))
@@ -377,6 +379,8 @@ function App() {
             <Route path="product-publish/logs" element={<PublishLogs />} />
             {/* CUSTOM: 资料池自动化流水线 */}
             <Route path="material-pool" element={<MaterialPool />} />
+            {/* CUSTOM: 网盘浏览与直选上架 */}
+            <Route path="pan-browser" element={<PanBrowser />} />
             {/* 商品监控 */}
             <Route path="product-monitor/overview" element={<MonitorOverview />} />
             <Route path="product-monitor/categories" element={<MonitorCategory />} />

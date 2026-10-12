@@ -42,6 +42,8 @@ import {
   uploadMaterialPoolToPan,
   type MaterialPoolCategory,
   type MaterialPoolItem,
+  SOURCE_TYPE_LABELS,
+  SOURCE_TYPE_OPTIONS,
 } from '@/api/materialPool'
 import { PlatformCategoryRecommender } from '@/pages/product-publish/PlatformCategoryRecommender'
 import type { PublishForm } from '@/pages/product-publish/publishTypes'
@@ -161,6 +163,7 @@ export function MaterialPool() {
   const [rows, setRows] = useState<MaterialPoolItem[]>([])
   const [accounts, setAccounts] = useState<AccountDetail[]>([])
   const [statusFilter, setStatusFilter] = useState('')
+  const [sourceTypeFilter, setSourceTypeFilter] = useState('')
   const [schoolFilter, setSchoolFilter] = useState('')
   const [yearFilter, setYearFilter] = useState('')
   const [gradeFilter, setGradeFilter] = useState('')
@@ -204,6 +207,7 @@ export function MaterialPool() {
       setLoading(true)
       const res = await getMaterialPoolList({
         status: statusFilter || undefined,
+        source_type: sourceTypeFilter || undefined,
         school: schoolFilter.trim() || undefined,
         year: yearFilter.trim() || undefined,
         grade: gradeFilter.trim() || undefined,
@@ -418,6 +422,10 @@ export function MaterialPool() {
               <Select value={statusFilter} onChange={setStatusFilter} options={statusOptions} placeholder="全部状态" />
             </div>
             <div className="input-group min-w-[140px]">
+              <label className="input-label">来源</label>
+              <Select value={sourceTypeFilter} onChange={setSourceTypeFilter} options={[...SOURCE_TYPE_OPTIONS]} placeholder="全部来源" />
+            </div>
+            <div className="input-group min-w-[140px]">
               <label className="input-label">学校</label>
               <input type="text" value={schoolFilter} onChange={(e) => setSchoolFilter(e.target.value)} placeholder="如：学军中学" className="input-ios" />
             </div>
@@ -500,6 +508,15 @@ export function MaterialPool() {
                       <td className="align-top whitespace-nowrap">{row.id}</td>
                       <td className="align-top min-w-[280px] max-w-[340px]">
                         <div className="font-medium whitespace-pre-wrap break-words">{row.paper_name}</div>
+                        {row.source_type && SOURCE_TYPE_LABELS[row.source_type] && (
+                          <span className={`inline-block mt-1 px-1.5 py-0.5 rounded text-xs ${
+                            row.source_type === 'quark-manual'
+                              ? 'bg-violet-50 text-violet-600 dark:bg-violet-900/30 dark:text-violet-400'
+                              : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400'
+                          }`}>
+                            {SOURCE_TYPE_LABELS[row.source_type]}
+                          </span>
+                        )}
                         <a
                           href={row.source_url}
                           target="_blank"

@@ -144,6 +144,7 @@ class MaterialPoolService:
         year: Optional[str] = None,
         grade: Optional[str] = None,
         keyword: Optional[str] = None,
+        source_type: Optional[str] = None,
     ) -> Dict[str, Any]:
         page = max(page, 1)
         page_size = page_size if page_size in (10, 20, 50, 100) else 20
@@ -151,6 +152,8 @@ class MaterialPoolService:
         cond = [MaterialPool.is_deleted == False, *self._scope_cond(user)]  # noqa: E712
         if status:
             cond.append(MaterialPool.status == status)
+        if source_type:
+            cond.append(MaterialPool.source_type == source_type)
         if school:
             cond.append(MaterialPool.school.like(f"%{school}%"))
         if year:

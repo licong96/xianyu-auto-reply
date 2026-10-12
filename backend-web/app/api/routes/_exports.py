@@ -58,6 +58,7 @@ from . import (
     listing_monitor_category,
     listing_monitor,
     material_pool,  # CUSTOM: 资料池自动化流水线
+    pan_browser,  # CUSTOM: 网盘浏览与直选上架
     collect_fallback_account,
     order_fallback_account,
     external_cookie,
@@ -210,6 +211,8 @@ api_router.include_router(version.router, tags=["版本检测"])  # 已定义pre
 
 # CUSTOM: 资料池自动化流水线
 api_router.include_router(material_pool.router, tags=["资料池"])  # 已定义prefix="/material-pool"
+# CUSTOM: 网盘浏览与直选上架
+api_router.include_router(pan_browser.router, tags=["网盘"])  # 已定义prefix="/pan"
 
 
 __all__ = ["api_router"]

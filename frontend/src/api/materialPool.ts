@@ -69,8 +69,23 @@ export interface MaterialPoolListParams {
   year?: string
   grade?: string
   keyword?: string
+  /** 来源筛选：zxxk=学科网爬虫，quark-manual=网盘直选 */
+  source_type?: string
   page?: number
   page_size?: number
+}
+
+/** 来源选项（与后端 source_type 对应） */
+export const SOURCE_TYPE_OPTIONS = [
+  { value: '', label: '全部来源' },
+  { value: 'zxxk', label: '学科网爬虫' },
+  { value: 'quark-manual', label: '网盘直选' },
+] as const
+
+/** 来源徽章样式 */
+export const SOURCE_TYPE_LABELS: Record<string, string> = {
+  zxxk: '学科网',
+  'quark-manual': '网盘直选',
 }
 
 export interface MaterialPoolUpdatePayload {
