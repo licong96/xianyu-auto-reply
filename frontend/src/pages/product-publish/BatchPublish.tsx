@@ -13,6 +13,7 @@ import { Layers, CheckCircle, XCircle, Clock, Play, Loader2 } from 'lucide-react
 import { useUIStore } from '@/store/uiStore'
 import { publishBatch, getBatchStatus, getMaterials, type ProductMaterial, type BatchAccountStatus } from '@/api/productPublish'
 import { getAccountDetails } from '@/api/accounts'
+import { toPreviewUrl } from '@/utils/staticUrl'
 
 interface BatchProgress {
   batch_id: string
@@ -290,7 +291,7 @@ export function BatchPublish() {
                       <input type="checkbox" className="w-4 h-4 text-blue-600 rounded accent-blue-500"
                         checked={checked} onChange={() => toggleMaterial(m.id)} />
                       {m.images?.[0] ? (
-                        <img src={m.images[0]} alt={m.title} className="w-10 h-10 object-cover rounded-lg flex-shrink-0" />
+                        <img src={toPreviewUrl(m.images[0])} alt={m.title} className="w-10 h-10 object-cover rounded-lg flex-shrink-0" />
                       ) : (
                         <div className="w-10 h-10 bg-slate-100 dark:bg-slate-700 rounded-lg flex items-center justify-center text-xs text-slate-400 flex-shrink-0">无图</div>
                       )}

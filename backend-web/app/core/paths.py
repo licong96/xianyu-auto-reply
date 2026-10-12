@@ -14,12 +14,14 @@ from pathlib import Path
 # 项目根目录 (backend-web/)
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-# 静态文件根目录 - 优先使用环境变量 STATIC_DIR（Docker共享卷），本地回退到 backend-web/static
-_static_dir_env = os.environ.get("STATIC_DIR", "")
+# 静态文件根目录 - 优先使用环境变量 STATIC_DIR（Docker 共享卷），本地回退到 backend-web/static。
+# 相对路径固定相对 backend-web 解析，不能跟随进程工作目录：从项目根启动时，
+# cwd/static 是另一份空目录，上传文件实际写在 backend-web/static。
+_static_dir_env = os.environ.get("STATIC_DIR", "").strip()
 if _static_dir_env:
     STATIC_ROOT = Path(_static_dir_env)
     if not STATIC_ROOT.is_absolute():
-        STATIC_ROOT = Path.cwd() / STATIC_ROOT
+        STATIC_ROOT = PROJECT_ROOT / STATIC_ROOT
 else:
     STATIC_ROOT = PROJECT_ROOT / "static"
 
@@ -67,6 +69,26 @@ def get_upload_path(subdir: str = "images") -> Path:
     return subdirs.get(subdir, UPLOADS_ROOT)
 
 
+def to_public_static_url(value: str | None) -> str:
+    """把本地文件路径转成浏览器可访问的 /static/... 地址。
+
+    已经是 http(s)、blob、data 或 /static/ 的值原样返回。
+    绝对路径中如果包含 /static/，从那里截取，避免把本机路径写进 img src。
+    """
+    if not value:
+        return ""
+    normalized = str(value).replace("\\", "/")
+    if normalized.lower().startswith(("http://", "https://", "blob:", "data:")):
+        return normalized
+    marker = "/static/"
+    index = normalized.find(marker)
+    if index >= 0:
+        return normalized[index:]
+    if normalized.startswith("static/"):
+        return f"/{normalized}"
+    return normalized
+
+
 def get_static_url(filepath: str) -> str:
     """将文件路径转换为静态URL
     
@@ -97,4 +119,5 @@ __all__ = [
     "ensure_upload_dirs",
     "get_upload_path",
     "get_static_url",
+    "to_public_static_url",
 ]

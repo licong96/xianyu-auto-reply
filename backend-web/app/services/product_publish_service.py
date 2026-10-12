@@ -13,6 +13,7 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.models.product_material import ProductMaterial
+from app.core.paths import to_public_static_url
 from app.services.xianyu_item_snapshot import as_bool
 
 
@@ -300,6 +301,48 @@ class ProductMaterialService:
 
 # ==================== 工具函数 ====================
 
+def _public_images(images: Any) -> list:
+    """素材图片列表转为浏览器可访问地址，本机绝对路径不再直接返回。"""
+    if not isinstance(images, list):
+        return []
+    return [to_public_static_url(item) if isinstance(item, str) else item for item in images]
+
+
+def _public_videos(videos: Any) -> list:
+    """只转换预览地址，保留 path 供发布时读取本地文件。"""
+    if not isinstance(videos, list):
+        return []
+    result = []
+    for video in videos:
+        if isinstance(video, dict) and isinstance(video.get("url"), str):
+            copied = dict(video)
+            copied["url"] = to_public_static_url(copied["url"])
+            result.append(copied)
+        else:
+            result.append(video)
+    return result
+
+
+def _public_specifications(specifications: Any) -> list:
+    """规格图同样可能存成本机路径，返回前转成 /static 地址。"""
+    if not isinstance(specifications, list):
+        return []
+    result = []
+    for specification in specifications:
+        if not isinstance(specification, dict):
+            result.append(specification)
+            continue
+        copied = dict(specification)
+        values = []
+        for value in copied.get("values") or []:
+            if isinstance(value, dict) and isinstance(value.get("image"), str):
+                value = {**value, "image": to_public_static_url(value["image"])}
+            values.append(value)
+        copied["values"] = values
+        result.append(copied)
+    return result
+
+
 def _material_to_dict(m: ProductMaterial) -> dict:
     """将素材模型转为字典"""
     shipping_method = m.shipping_method or ("fixed" if m.postage else "free")
@@ -321,9 +364,9 @@ def _material_to_dict(m: ProductMaterial) -> dict:
         "platform_attributes": m.platform_attributes or [],
         "category_source": m.category_source or "manual",
         "category_confidence": float(m.category_confidence) if m.category_confidence is not None else None,
-        "images": m.images or [],
-        "videos": m.videos or [],
-        "specifications": m.specifications or [],
+        "images": _public_images(m.images),
+        "videos": _public_videos(m.videos),
+        "specifications": _public_specifications(m.specifications),
         "sku_rows": m.sku_rows or [],
         "quantity": m.quantity or 1,
         # shipping_method 是实际发布依据；兼容历史记录中的旧/空 delivery_method。

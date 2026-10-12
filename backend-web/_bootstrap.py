@@ -28,6 +28,7 @@ from loguru import logger
 from fastapi.responses import JSONResponse
 
 from app.core.config import get_settings
+from app.core.paths import STATIC_ROOT, ensure_upload_dirs
 from common.db.error_messages import get_public_database_error_message
 from common.utils.logging_utils import setup_logging
 from common.utils.network_utils import resolve_listen_host
@@ -112,8 +113,10 @@ async def lifespan(app: FastAPI):
     await apply_db_log_retention()
     log_retention_sync_task = asyncio.create_task(run_db_log_retention_sync())
     
-    # 确保上传目录存在
-    static_path = Path(settings.static_dir)
+    # 确保上传目录存在。必须和图片落盘目录 STATIC_ROOT 是同一份，
+    # 不能用相对的 settings.static_dir，否则从项目根启动时会指到空目录。
+    ensure_upload_dirs()
+    static_path = STATIC_ROOT
     upload_dirs = [
         static_path / "uploads",
         static_path / "uploads" / "face",
@@ -233,11 +236,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 挂载静态文件目录
-static_path = Path(settings.static_dir)
-if static_path.exists():
-    app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
-    logger.info(f"静态文件路径已挂载: /static -> {static_path.absolute()}")
+# 挂载静态文件目录（与 get_upload_path 的落盘目录保持一致）
+static_path = STATIC_ROOT
+static_path.mkdir(parents=True, exist_ok=True)
+app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
+logger.info(f"静态文件路径已挂载: /static -> {static_path.resolve()}")
 
 
 # 挂载API路由

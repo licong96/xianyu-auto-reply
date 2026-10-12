@@ -14,6 +14,7 @@ import {
 } from '@/api/items'
 import { uploadProductImages, uploadProductVideos, type MaterialVideo, type PublishSkuRow, type PublishSpecification } from '@/api/productPublish'
 import { getApiErrorMessage } from '@/utils/apiError'
+import { toPreviewUrl } from '@/utils/staticUrl'
 import ProductPublishForm from '@/pages/product-publish/ProductPublishForm'
 import ProductVideoUploader from '@/pages/product-publish/ProductVideoUploader'
 import {
@@ -360,7 +361,7 @@ export function SellerItemEditModal({ cookieId, itemId, itemTitle, onClose, onSa
                   <div className="flex flex-wrap gap-2">
                     {form.images.map((url, index) => (
                       <div key={`${url}-${index}`} className="relative h-20 w-20 overflow-hidden rounded-lg border border-slate-200 dark:border-slate-600 group">
-                        <img src={url} alt="" className="h-full w-full object-cover" />
+                        <img src={toPreviewUrl(url)} alt="" className="h-full w-full object-cover" />
                         {index === 0 && <span className="absolute bottom-0 left-0 right-0 bg-blue-500/80 py-0.5 text-center text-[10px] text-white">首图</span>}
                         <button
                           type="button"

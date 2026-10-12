@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react'
 import { ChevronLeft, ChevronRight, Eye, Image, Loader2, Upload, X } from 'lucide-react'
 import { getMaterial, getMaterials, type ProductMaterial } from '@/api/productPublish'
 import { useUIStore } from '@/store/uiStore'
+import { toPreviewUrl } from '@/utils/staticUrl'
 
 interface MaterialPickerModalProps {
   onSelect: (material: ProductMaterial) => void
@@ -48,14 +49,14 @@ function MaterialDetailModal({ material, onClose }: { material: ProductMaterial;
             <div className="flex flex-wrap gap-2">
               {(material.images || []).map((url, index) => (
                 <div key={`${url}-${index}`} className="relative h-24 w-24 overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">
-                  <img src={url} alt={`${material.title} 图片 ${index + 1}`} className="h-full w-full object-cover" />
+                  <img src={toPreviewUrl(url)} alt={`${material.title} 图片 ${index + 1}`} className="h-full w-full object-cover" />
                   {index === 0 && <span className="absolute inset-x-0 bottom-0 bg-black/60 py-0.5 text-center text-[10px] text-white">首图</span>}
                 </div>
               ))}
               {(material.images || []).length === 0 && <span className="text-sm text-slate-400">暂无图片</span>}
             </div>
             {(material.videos || []).map((video, index) => (
-              <video key={`${video.url}-${index}`} className="w-full max-w-xl rounded-lg bg-black" controls preload="metadata" src={video.url}>
+              <video key={`${video.url}-${index}`} className="w-full max-w-xl rounded-lg bg-black" controls preload="metadata" src={toPreviewUrl(video.url)}>
                 当前浏览器不支持视频播放
               </video>
             ))}
@@ -113,7 +114,7 @@ function MaterialDetailModal({ material, onClose }: { material: ProductMaterial;
                     <div className="flex flex-wrap gap-2">
                       {specification.values.map((value) => (
                         <span key={value.name} className="inline-flex items-center gap-2 rounded-md border border-slate-200 px-2 py-1 text-sm text-slate-700 dark:border-slate-700 dark:text-slate-200">
-                          {value.image && <img src={value.image} alt="" className="h-7 w-7 rounded object-cover" />}
+                          {value.image && <img src={toPreviewUrl(value.image)} alt="" className="h-7 w-7 rounded object-cover" />}
                           {value.name}
                         </span>
                       ))}
@@ -212,7 +213,7 @@ export function MaterialPickerModal({ onSelect, onClose }: MaterialPickerModalPr
                   <tr><td colSpan={6} className="py-16 text-center text-slate-400"><Image className="mx-auto mb-2 h-10 w-10 text-slate-300" />素材库为空，请先添加素材</td></tr>
                 ) : materials.map((material) => (
                   <tr key={material.id}>
-                    <td className="w-[240px] max-w-[240px] overflow-hidden"><div className="flex w-full min-w-0 items-center gap-3">{material.images?.[0] ? <img src={material.images[0]} alt="" className="h-12 w-12 flex-shrink-0 rounded-lg object-cover" /> : <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-lg bg-slate-100 text-xs text-slate-400 dark:bg-slate-700">无图</div>}<div className="min-w-0 flex-1 overflow-hidden"><p className="block truncate font-medium text-slate-800 dark:text-slate-100" title={material.title}>{material.title}</p><p className="mt-1 block truncate text-xs text-slate-400" title={material.description}>{material.description}</p></div></div></td>
+                    <td className="w-[240px] max-w-[240px] overflow-hidden"><div className="flex w-full min-w-0 items-center gap-3">{material.images?.[0] ? <img src={toPreviewUrl(material.images[0])} alt="" className="h-12 w-12 flex-shrink-0 rounded-lg object-cover" /> : <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-lg bg-slate-100 text-xs text-slate-400 dark:bg-slate-700">无图</div>}<div className="min-w-0 flex-1 overflow-hidden"><p className="block truncate font-medium text-slate-800 dark:text-slate-100" title={material.title}>{material.title}</p><p className="mt-1 block truncate text-xs text-slate-400" title={material.description}>{material.description}</p></div></div></td>
                     <td className="whitespace-nowrap font-medium text-amber-600">¥{material.price}</td>
                     <td className="max-w-40"><span className="block truncate" title={material.platform_category_name || material.category || ''}>{material.platform_category_name || material.category || '-'}</span></td>
                     <td>{(material.specifications || []).length ? `${material.specifications.length} 类 / ${(material.sku_rows || []).length} 组合` : '单规格'}</td>

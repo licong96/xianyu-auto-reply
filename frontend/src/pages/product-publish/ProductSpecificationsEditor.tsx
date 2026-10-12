@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Plus, Trash2, Upload, X } from 'lucide-react'
 import { useUIStore } from '@/store/uiStore'
+import { toPreviewUrl } from '@/utils/staticUrl'
 import { buildSkuKey, type ProductSpecification, type SkuRow, type SpecificationValue } from './publishTypes'
 
 const PRESET_TYPES = ['颜色', '尺码', '容量', '份数', '大小', '高度', '总量']
@@ -264,7 +265,7 @@ export function ProductSpecificationsEditor({
                           className="block h-full w-full overflow-hidden rounded border border-slate-200 hover:border-blue-400 dark:border-slate-600"
                         >
                           <img
-                            src={value.image}
+                            src={toPreviewUrl(value.image)}
                             alt={`规格图片：${value.name || '未命名规格值'}`}
                             className="h-full w-full object-cover"
                           />

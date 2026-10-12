@@ -8,6 +8,7 @@
  * 4. 一键上架 / 批量上架
  */
 import { get, post, put } from '@/utils/request'
+import { toPreviewUrl } from '@/utils/staticUrl'
 import type { ApiResponse } from '@/types'
 
 const PREFIX = '/api/v1/material-pool'
@@ -158,8 +159,9 @@ export const uploadMaterialPoolCover = async (file: File): Promise<{ path: strin
 
 /** 把 cover_image 存储值转成可预览的 URL（绝对路径或 /static/ 相对路径均可） */
 export const coverImageToUrl = (value: string | null | undefined): string => {
-  if (!value) return ''
-  if (value.startsWith('/static/')) return value
-  const filename = value.split('/').pop()
-  return filename ? `/static/uploads/products/${filename}` : value
+  const preview = toPreviewUrl(value)
+  if (!preview) return ''
+  if (preview.startsWith('/static/') || /^(https?:|blob:|data:)/i.test(preview)) return preview
+  const filename = preview.split('/').pop()
+  return filename ? `/static/uploads/products/${filename}` : preview
 }

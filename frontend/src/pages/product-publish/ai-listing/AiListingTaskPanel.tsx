@@ -18,6 +18,7 @@ import {
 import { uploadProductImages } from '@/api/productPublish'
 import { useUIStore } from '@/store/uiStore'
 import { getApiErrorMessage } from '@/utils/apiError'
+import { toPreviewUrl } from '@/utils/staticUrl'
 import { clampNumberInput } from '@/utils/number'
 
 /** 成色选项，与素材库保持一致 */
@@ -356,7 +357,7 @@ export function AiListingTaskPanel({ configs, task, onStartTracking, onResetTask
         <div className="flex flex-wrap items-center gap-2">
           {fallbackImages.map((url, index) => (
             <div key={url} className="relative w-16 h-16 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700">
-              <img src={url} alt={`兜底图片${index + 1}`} className="w-full h-full object-cover" />
+              <img src={toPreviewUrl(url)} alt={`兜底图片${index + 1}`} className="w-full h-full object-cover" />
               <button
                 className="absolute top-0 right-0 bg-black/50 text-white p-0.5"
                 title="移除"

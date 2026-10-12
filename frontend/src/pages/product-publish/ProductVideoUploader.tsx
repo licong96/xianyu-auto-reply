@@ -5,6 +5,7 @@
 import { useState } from 'react'
 import { Loader2, Trash2, Upload } from 'lucide-react'
 import type { MaterialVideo } from '@/api/productPublish'
+import { toPreviewUrl } from '@/utils/staticUrl'
 
 interface ProductVideoUploaderProps {
   videos: MaterialVideo[]
@@ -37,7 +38,7 @@ export function ProductVideoUploader({ videos, onUploadVideo, onChange }: Produc
       <div className="flex flex-wrap items-center gap-2">
         {videos.map((video, index) => (
           <div key={`${video.url}-${index}`} className="group relative h-20 w-28 overflow-hidden rounded-lg border border-slate-200 bg-slate-100 dark:border-slate-600 dark:bg-slate-800">
-            <video src={video.url} className="h-full w-full object-cover" preload="metadata" />
+            <video src={toPreviewUrl(video.url)} className="h-full w-full object-cover" preload="metadata" />
             <button type="button" title="移除视频" className="absolute right-1 top-1 rounded bg-black/60 p-1 text-white opacity-0 transition-opacity group-hover:opacity-100 hover:bg-red-500" onClick={() => onChange(videos.filter((_, itemIndex) => itemIndex !== index))}>
               <Trash2 className="h-3.5 w-3.5" />
             </button>
