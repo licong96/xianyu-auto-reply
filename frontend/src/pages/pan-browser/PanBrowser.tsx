@@ -7,7 +7,7 @@
  * 3. 选中文件补充信息（标题/售价/描述/封面/学校/年份/年级）一键导入资料池
  * 4. 「资料池状态」列标记已导入文件，辅助人工判断
  *
- * 路径状态写进 URL（?path=），刷新不丢位置；文件夹仅浏览+分享，上架仅文件。
+ * 路径状态写进 URL（?path=），刷新不丢位置；文件夹可浏览、分享，也可整目录分享后上架。
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
@@ -42,7 +42,7 @@ import { PageLoading } from '@/components/common/Loading'
 import { useUIStore } from '@/store/uiStore'
 import { getApiErrorMessage } from '@/utils/request'
 
-const DEFAULT_PATH = '/资料池'
+const DEFAULT_PATH = '/'
 
 const POOL_STATUS_LABELS: Record<string, string> = {
   crawled: '已采集',
@@ -410,7 +410,7 @@ export function PanBrowser() {
                             <Share2 className="w-3.5 h-3.5" />
                             分享
                           </button>
-                          {!entry.dir && !entry.pool && (
+                          {!entry.pool && (
                             <button
                               onClick={() => setImportEntry(entry)}
                               className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs bg-green-50 text-green-600 hover:bg-green-100 dark:bg-green-900/30 dark:text-green-400"
@@ -612,7 +612,7 @@ function ImportModal({
         <div className="rounded-lg bg-slate-50 dark:bg-slate-900/40 p-3 text-sm">
           <div className="font-medium break-all">{entry.file_name}</div>
           <div className="text-xs text-slate-500 mt-1 break-all">{entry.path}</div>
-          <div className="text-xs text-slate-400 mt-0.5">{formatFileSize(entry.size)}</div>
+          <div className="text-xs text-slate-400 mt-0.5">{entry.dir ? '文件夹（分享整个目录）' : formatFileSize(entry.size)}</div>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
