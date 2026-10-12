@@ -22,8 +22,9 @@ from pathlib import Path
 
 from loguru import logger
 
-DEFAULT_BIN = str(Path.home() / "Desktop/learning/xianyu/kuake_cli/kuake")
-DEFAULT_WORKDIR = str(Path.home() / "Desktop/learning/xianyu/kuake_cli")
+# 本机（Windows）构建产物的默认路径；也可在根 .env 用 KUAKE_BIN / KUAKE_WORKDIR 覆盖
+DEFAULT_BIN = r"C:\Users\Administrator\Desktop\code\xianyu\kuake_cli\dist\kuake-windows-amd64.exe"
+DEFAULT_WORKDIR = r"C:\Users\Administrator\Desktop\code\xianyu\kuake_cli"
 
 
 class PanError(RuntimeError):
@@ -46,9 +47,17 @@ class QuarkPanClient:
         cmd = [self.bin, *[str(a) for a in args]]
         logger.info(f"[pan] {' '.join(cmd)}")
         try:
+            # text/encoding：kuake 固定输出 UTF-8 JSON（含中文消息），Windows 上
+            # locale 编码（cp1252/cp936）会触发 UnicodeDecodeError 导致读取线程失败、
+            # stdout 为空；errors=replace 保证坏字节不致命。
             proc = subprocess.run(
                 cmd, capture_output=True, text=True,
+                encoding="utf-8", errors="replace",
                 cwd=self.workdir, timeout=timeout or self.timeout,
+                # stdin 固定为 NUL：kuake 对 delete/download/info 等命令在
+                # 「stdin 非字符设备」时会进入管道模式并忽略路径参数；
+                # Windows 服务/无控制台运行时 stdin 可能是管道，会导致误触发。
+                stdin=subprocess.DEVNULL,
             )
         except subprocess.TimeoutExpired as e:
             raise PanError(f"kuake 超时（{timeout or self.timeout}s）：{' '.join(cmd)}") from e

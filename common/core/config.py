@@ -10,10 +10,20 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 from urllib.parse import quote_plus
 
+from dotenv import load_dotenv
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# 项目根目录 .env 显式注入 os.environ（override=False 不覆盖已存在的真实环境变量）。
+# 解决 pydantic-settings 只把 .env 读进 Settings 模型、不写回 os.environ 的问题：
+# 业务代码里通过 os.environ.get("KUAKE_BIN") 等方式读取的配置（如夸克网盘客户端）
+# 依赖这里注入才能拿到 .env 中的值；cwd 无关，各服务从自己的目录启动也能读到根 .env。
+_ROOT_ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
+if _ROOT_ENV_FILE.exists():
+    load_dotenv(_ROOT_ENV_FILE, override=False)
 
 
 class BaseConfig(BaseSettings):
