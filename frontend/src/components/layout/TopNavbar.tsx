@@ -86,9 +86,6 @@ export function TopNavbar({ systemName = '闲鱼管理系统' }: TopNavbarProps)
                 key={currentIndex}
                 className="announcement-vertical-scroll text-sm truncate"
               >
-                {currentAnnouncement.source === 'remote' && (
-                  <span className="inline-flex flex-shrink-0 px-1.5 py-0.5 mr-1.5 text-[10px] leading-none rounded bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300 align-middle">官方</span>
-                )}
                 <span className="font-medium text-orange-600 dark:text-orange-400">
                   {currentAnnouncement.title}
                 </span>
@@ -221,9 +218,6 @@ export function TopNavbar({ systemName = '闲鱼管理系统' }: TopNavbarProps)
                         <tr key={ann.id}>
                           <td className="font-medium text-slate-900 dark:text-slate-100">
                             <span className="inline-flex items-center gap-1.5">
-                              {ann.source === 'remote' && (
-                                <span className="flex-shrink-0 px-1.5 py-0.5 text-[10px] leading-none rounded bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300">官方</span>
-                              )}
                               {ann.title}
                             </span>
                           </td>

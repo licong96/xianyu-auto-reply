@@ -97,17 +97,11 @@ export function PopupAnnouncementModal() {
                         rel="noopener noreferrer"
                         className="flex-1 text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
                       >
-                        {item.source === 'remote' && (
-                          <span className="flex-shrink-0 px-1.5 py-0.5 text-[10px] leading-none rounded bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300">官方</span>
-                        )}
                         {item.title}
                         <ExternalLink className="w-3 h-3 flex-shrink-0" />
                       </a>
                     ) : (
                       <span className="flex-1 text-sm font-medium text-slate-900 dark:text-slate-100 flex items-center gap-1">
-                        {item.source === 'remote' && (
-                          <span className="flex-shrink-0 px-1.5 py-0.5 text-[10px] leading-none rounded bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300">官方</span>
-                        )}
                         {item.title}
                       </span>
                     )}

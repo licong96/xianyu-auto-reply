@@ -18,8 +18,8 @@ export interface PopupAnnouncement {
   is_enabled: boolean
   created_at: string
   updated_at: string
-  /** 弹窗公告来源：local-本站，remote-官方远程 */
-  source?: 'local' | 'remote'
+  /** 弹窗公告来源，固定为本站 */
+  source?: 'local'
 }
 
 export interface PopupAnnouncementListResponse {

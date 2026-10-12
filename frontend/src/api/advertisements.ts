@@ -24,8 +24,8 @@ export interface Advertisement {
   status: 'unpaid' | 'pending' | 'approved'
   created_at: string | null
   updated_at: string | null
-  /** 广告来源：local-本站，remote-官方远程 */
-  source?: 'local' | 'remote'
+  /** 广告来源，固定为本站 */
+  source?: 'local'
 }
 
 export interface AdListResponse {

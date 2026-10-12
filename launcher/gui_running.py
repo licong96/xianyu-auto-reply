@@ -24,7 +24,6 @@ from launcher.version import CURRENT_VERSION
 
 # 左侧导航菜单项定义：(标识key, 显示文字)
 _NAV_ITEMS = [
-    ("dashboard", "仪表盘"),
     ("status", "服务状态"),
     ("log_backend-web", "Backend 日志"),
     ("log_websocket", "WebSocket 日志"),
@@ -52,7 +51,7 @@ def show_running_page(app, start_results: dict):
     app._clear_page()
     app._current_page = "running"
     app._start_results = start_results
-    app._active_sub_page = "dashboard"
+    app._active_sub_page = "status"
     app._nav_labels = {}
 
     outer = tk.Frame(app.root, bg=COLORS["bg"])
@@ -80,8 +79,8 @@ def show_running_page(app, start_results: dict):
     content_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
     app._content_frame = content_frame
 
-    # 默认显示仪表盘
-    _switch_page(app, "dashboard")
+    # 默认显示服务状态（不再打开会拉取作者服务器广告的仪表盘）
+    _switch_page(app, "status")
 
     # 启动状态定时刷新
     _auto_refresh(app)
@@ -136,10 +135,7 @@ def _switch_page(app, nav_key: str):
     for w in app._content_frame.winfo_children():
         w.destroy()
 
-    if nav_key == "dashboard":
-        from launcher.gui_dashboard import render_dashboard_page
-        render_dashboard_page(app)
-    elif nav_key == "status":
+    if nav_key == "status":
         _render_status_content(app)
     elif nav_key == "renew":
         from launcher.gui_renew import render_renew_page

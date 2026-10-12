@@ -1,6 +1,7 @@
 #!/bin/bash
 # 闲鱼自动回复系统 - macOS 一键启动脚本
 # 用法: bash 启动.command   (或在 Finder 中双击)
+# 改代码希望保存后自动生效时，改用: bash 启动-开发.command
 
 cd "$(dirname "$0")"
 ROOT="$(pwd)"

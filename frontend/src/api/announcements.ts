@@ -18,8 +18,8 @@ export interface Announcement {
   content: string
   created_at: string
   updated_at: string
-  /** 公告来源：local-本站，remote-官方远程 */
-  source?: 'local' | 'remote'
+  /** 公告来源，固定为本站 */
+  source?: 'local'
 }
 
 export interface AnnouncementListResponse {
@@ -29,7 +29,7 @@ export interface AnnouncementListResponse {
   page_size: number
 }
 
-/** 获取系统顶部公告（公开接口，本地 + 远程官方合并） */
+/** 获取系统顶部公告（公开接口，仅本站公告） */
 export const getPublicAnnouncements = async (): Promise<ApiResponse & { data?: { items: Announcement[] } }> => {
   return get(`${PREFIX}/public`)
 }

@@ -11,8 +11,7 @@
 #    - IP 阶段：.env.production 里设 FRONTEND_BIND=0.0.0.0，直接 IP+端口访问
 #    - 域名阶段：改回 127.0.0.1，走宿主机 Nginx 443（见 deploy/生产部署加固说明.md）
 #    （ports 用 !reset 整体替换基座配置，避免数组合并产生重复绑定）
-# 4. 强制关闭作者服务器的远程广告/公告/弹窗（即使 .env 配错也生效）
-# 5. 收紧 CORS（覆盖原文件中的 *）
+# 4. 收紧 CORS（覆盖原文件中的 *）
 # ============================================================
 
 services:
@@ -26,9 +25,6 @@ services:
     ports: !reset
       - "127.0.0.1:8089:8089"
     environment:
-      - ENABLE_REMOTE_ADS=false
-      - ENABLE_REMOTE_ANNOUNCEMENTS=false
-      - ENABLE_REMOTE_POPUP_ANNOUNCEMENTS=false
       - CORS_ORIGINS=${CORS_ORIGINS:-https://xy-admin.your-domain.com}
 
   websocket:

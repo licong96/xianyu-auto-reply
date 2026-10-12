@@ -385,6 +385,8 @@ def run_server():
     """启动HTTP服务（供 main.py 的 __main__ 块调用）"""
     import uvicorn
 
+    from common.utils.dev_reload import uvicorn_reload_kwargs
+
     # 解析监听地址：默认 :: 双栈，Windows 或 IPv6 不可用时自动回退到 0.0.0.0
     listen_host = resolve_listen_host(settings.host, settings.service_port)
 
@@ -392,8 +394,8 @@ def run_server():
         "main:app",
         host=listen_host,
         port=settings.service_port,
-        reload=False,
         log_level=settings.log_level.lower(),
         # 保留公共日志工具配置，确保 Uvicorn 日志也进入普通日志和 error.log。
         log_config=None,
+        **uvicorn_reload_kwargs(Path(__file__)),
     )

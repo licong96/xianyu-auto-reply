@@ -4776,11 +4776,7 @@ export interface paths {
         };
         /**
          * Get Public Announcements
-         * @description 获取公告列表（公开接口，用于系统顶部公告展示）
-         *
-         *     返回内容 = 本地最新公告 + 远程官方服务器的公开公告（与桌面版同源），
-         *     远程公告以 source=remote 标记、ID 取负，避免与本地公告冲突。
-         *     远程拉取失败时静默降级，仅返回本地公告。
+         * @description 获取本地最新公告（公开接口，用于系统顶部公告展示）。
          */
         get: operations["get_public_announcements_api_v1_announcements_public_get"];
         put?: never;
@@ -4848,11 +4844,7 @@ export interface paths {
         };
         /**
          * Get Public Popup Announcements
-         * @description 获取启用中的弹窗公告（公开接口，用于用户登录后弹窗展示）
-         *
-         *     返回内容 = 本地启用且未删除的弹窗公告 + 远程官方服务器的公开弹窗公告（与桌面版同源），
-         *     远程弹窗公告以 source=remote 标记、ID 取负，避免与本地数据冲突。
-         *     远程拉取失败时静默降级，仅返回本地弹窗公告。
+         * @description 获取本地启用中的弹窗公告（公开接口，用于用户登录后弹窗展示）。
          */
         get: operations["get_public_popup_announcements_api_v1_popup_announcements_public_get"];
         put?: never;
@@ -5068,11 +5060,7 @@ export interface paths {
         };
         /**
          * Get Public Ads
-         * @description 获取已复核的广告列表（公开接口，用于仪表盘展示）
-         *
-         *     返回内容 = 本地已复核且未过期的广告 + 远程官方服务器的公开广告（与桌面版同源），
-         *     远程广告以 source=remote 标记、ID 取负，避免与本地广告冲突。
-         *     远程拉取失败时静默降级，仅返回本地广告。
+         * @description 获取已复核且未过期的本地广告（公开接口，用于仪表盘展示）。
          */
         get: operations["get_public_ads_api_v1_advertisements_public_get"];
         put?: never;
