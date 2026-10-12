@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -357,6 +358,36 @@ class MaterialPoolService:
         item = (await self.session.execute(stmt)).scalar_one_or_none()
         return item.item_id if item else None
 
+    async def _ensure_catalog_item(
+        self, account_pk: int, owner_id: int, item_id: str, title: str, price: float
+    ) -> None:
+        """把刚发布的商品写入本地商品目录缓存（幂等，已存在则跳过）。
+
+        自动续售规则的启用校验依赖 xy_catalog_items 命中商品；
+        该缓存平时靠「获取该账号商品」同步写入，新发布的商品尚未同步时
+        如果不这里兜底，启用续售会误报「当前商品不属于所选闲鱼账号」，
+        并把已发布成功的一键上架整单误判为失败。
+        """
+        stmt = select(XYCatalogItem.id).where(
+            XYCatalogItem.account_pk == account_pk,
+            XYCatalogItem.owner_id == owner_id,
+            XYCatalogItem.item_id == item_id,
+        )
+        if (await self.session.execute(stmt)).scalar_one_or_none():
+            return
+        self.session.add(XYCatalogItem(
+            owner_id=owner_id,
+            account_pk=account_pk,
+            item_id=item_id,
+            title=title,
+            price=f"{price:.2f}",
+            is_polished=False,
+            metadata_json={"description": "", "source": "material-pool-publish"},
+            created_at=datetime.now(timezone.utc),
+        ))
+        await self.session.flush()
+        logger.info(f"[material-pool] 商品已写入目录缓存：item={item_id}")
+
     async def list_to_pan(
         self,
         user: User,
@@ -530,24 +561,36 @@ class MaterialPoolService:
 
             # 4) 自动续售规则（幂等：material_id 维度 save 即 upsert）
             if not relist_rule_id:
-                relist_svc = AutoRelistRuleService(self.session)
-                rule = await relist_svc.save(
-                    material_id=material_id,
-                    user_id=user.id,
-                    account_id=account_id,
-                    current_item_id=item_id,
-                    card_id=card_id,
-                    enabled=True,
-                    delay_seconds=60,
-                )
-                relist_rule_id = rule.id
-                await self.session.execute(
-                    update(MaterialPool)
-                    .where(MaterialPool.id == pool_id)
-                    .values(relist_rule_id=relist_rule_id)
-                )
+                # 4.0 先把刚发布的商品兜底写入本地目录缓存：续售启用校验依赖
+                # xy_catalog_items 命中商品，新商品未同步时否则会误报
+                # 「当前商品不属于所选闲鱼账号」并把整单误判为失败。
+                await self._ensure_catalog_item(account.id, user.id, item_id, title, price)
                 await self.session.commit()
-                logger.info(f"[material-pool] 续售规则已创建：pool={pool_id} rule={relist_rule_id}")
+                relist_svc = AutoRelistRuleService(self.session)
+                try:
+                    rule = await relist_svc.save(
+                        material_id=material_id,
+                        user_id=user.id,
+                        account_id=account_id,
+                        current_item_id=item_id,
+                        card_id=card_id,
+                        enabled=True,
+                        delay_seconds=60,
+                    )
+                    relist_rule_id = rule.id
+                    await self.session.execute(
+                        update(MaterialPool)
+                        .where(MaterialPool.id == pool_id)
+                        .values(relist_rule_id=relist_rule_id)
+                    )
+                    await self.session.commit()
+                    logger.info(f"[material-pool] 续售规则已创建：pool={pool_id} rule={relist_rule_id}")
+                except Exception as relist_exc:  # noqa: BLE001
+                    # 续售是附加能力：发布和卡券绑定已经成功落库，
+                    # 这里失败只告警、不再把整单标为失败；可事后在素材处重新启用续售。
+                    logger.warning(
+                        f"[material-pool] 续售规则启用失败（不影响已上架结果）：pool={pool_id} err={relist_exc}"
+                    )
 
             row.status = STATUS_LISTED
             row.error_message = None

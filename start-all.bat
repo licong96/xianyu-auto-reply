@@ -42,34 +42,41 @@ for /f %%R in ('powershell -NoProfile -Command "$m = Test-NetConnection -Compute
 )
 
 rem ---------- 2. Helpers ----------
+rem NOTE: subroutines called from inside parenthesized IF blocks MUST read
+rem their inputs from preset variables (CHECK_PORT / WAIT_PORT / SVC_DIR),
+rem because call-arguments (%1/%2) are unreliable in that context.
 
-rem is_healthy ^<port^>: exit 0 when /health returns HTTP 200 with success
 goto :main
+
+rem is_healthy: uses CHECK_PORT, exits 0 when /health returns HTTP 200 + success
 :is_healthy
-powershell -NoProfile -Command "try { $resp = Invoke-WebRequest -Uri 'http://127.0.0.1:%~1/health' -TimeoutSec 3 -UseBasicParsing; if ($resp.StatusCode -eq 200 -and $resp.Content -match 'success') { exit 0 } else { exit 1 } } catch { exit 1 }"
+powershell -NoProfile -Command "try { $resp = Invoke-WebRequest -Uri 'http://127.0.0.1:%CHECK_PORT%/health' -TimeoutSec 3 -UseBasicParsing; if ($resp.StatusCode -eq 200 -and $resp.Content -match 'success') { exit 0 } else { exit 1 } } catch { exit 1 }"
 exit /b %errorlevel%
 
-rem port_pid ^<port^> ^<var^>: set var to PID listening on port (empty if none)
+rem port_pid: uses CHECK_PORT, sets PID to the listener PID (empty if none)
 :port_pid
-set "%~2="
-for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:":%~1 .*LISTENING"') do ( set "%~2=%%P" & exit /b 0 )
-exit /b 1
+set "PID="
+for /f %%P in ('powershell -NoProfile -Command "$c = Get-NetTCPConnection -LocalPort %CHECK_PORT% -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if ($c) { $c.OwningProcess }" 2^>nul') do (
+    echo(%%P|findstr /r "[0-9][0-9]*" >nul && set "PID=%%P"
+)
+exit /b 0
 
-rem wait_healthy ^<port^> ^<seconds^>: poll until healthy or timeout
+rem wait_healthy: uses WAIT_PORT / WAIT_SECS
 :wait_healthy
-set /a TRIES=%~2/2
+set /a TRIES=%WAIT_SECS%/2
 if %TRIES% LSS 1 set TRIES=1
+set "CHECK_PORT=%WAIT_PORT%"
 for /l %%I in (1,1,%TRIES%) do (
-    call :is_healthy %~1
+    call :is_healthy
     if !errorlevel! equ 0 exit /b 0
-    timeout /t 2 /nobreak >nul
+    ping -n 3 127.0.0.1 >nul
 )
 exit /b 1
 
-rem start_py ^<name^> ^<dir^>: start a python service hidden, detached
+rem start_py: uses SVC_DIR, starts a python service hidden and detached
 :start_py
-echo [%~1] Starting...
-powershell -NoProfile -Command "Start-Process -FilePath '%ROOT%\%~2\.venv\Scripts\python.exe' -ArgumentList 'main.py' -WorkingDirectory '%ROOT%\%~2' -WindowStyle Hidden -RedirectStandardOutput '%ROOT%\%~2\logs_start.log' -RedirectStandardError '%ROOT%\%~2\logs_start.err.log'"
+echo [%SVC_NAME%] Starting...
+powershell -NoProfile -Command "Start-Process -FilePath '%ROOT%\%SVC_DIR%\.venv\Scripts\python.exe' -ArgumentList 'main.py' -WorkingDirectory '%ROOT%\%SVC_DIR%' -WindowStyle Hidden -RedirectStandardOutput '%ROOT%\%SVC_DIR%\logs_start.log' -RedirectStandardError '%ROOT%\%SVC_DIR%\logs_start.err.log'"
 exit /b 0
 
 rem ---------- 3. Main ----------
@@ -77,53 +84,72 @@ rem ---------- 3. Main ----------
 :main
 
 rem 3.1 backend-web (8089) - others depend on it
-call :is_healthy 8089
+set "CHECK_PORT=8089"
+call :is_healthy
 if %errorlevel% equ 0 (
     echo [backend-web] Already running on port 8089
 ) else (
-    call :port_pid 8089 PID
+    set "CHECK_PORT=8089"
+    call :port_pid
     if defined PID (
-        echo [backend-web] Port 8089 occupied by PID=%PID% but unhealthy.
+        echo [backend-web] Port 8089 occupied by PID=!PID! but unhealthy.
         echo             Run stop-all.bat first.
     ) else (
-        call :start_py backend-web backend-web
-        call :wait_healthy 8089 120
+        set "SVC_NAME=backend-web"
+        set "SVC_DIR=backend-web"
+        call :start_py
+        set "WAIT_PORT=8089"
+        set "WAIT_SECS=120"
+        call :wait_healthy
         if !errorlevel! equ 0 ( echo [backend-web] Ready on port 8089 [OK] ) else ( echo [backend-web] Not ready in 120s, see backend-web\logs_start.log )
     )
 )
 
 rem 3.2 websocket (8090)
-call :is_healthy 8090
+set "CHECK_PORT=8090"
+call :is_healthy
 if %errorlevel% equ 0 (
     echo [websocket] Already running on port 8090
 ) else (
-    call :port_pid 8090 PID
+    set "CHECK_PORT=8090"
+    call :port_pid
     if defined PID (
-        echo [websocket] Port 8090 occupied by PID=%PID% but unhealthy. Run stop-all.bat first.
+        echo [websocket] Port 8090 occupied by PID=!PID! but unhealthy. Run stop-all.bat first.
     ) else (
-        call :start_py websocket websocket
-        call :wait_healthy 8090 90
+        set "SVC_NAME=websocket"
+        set "SVC_DIR=websocket"
+        call :start_py
+        set "WAIT_PORT=8090"
+        set "WAIT_SECS=90"
+        call :wait_healthy
         if !errorlevel! equ 0 ( echo [websocket] Ready on port 8090 [OK] ) else ( echo [websocket] Not ready in 90s, see websocket\logs_start.log )
     )
 )
 
 rem 3.3 scheduler (8091)
-call :is_healthy 8091
+set "CHECK_PORT=8091"
+call :is_healthy
 if %errorlevel% equ 0 (
     echo [scheduler] Already running on port 8091
 ) else (
-    call :port_pid 8091 PID
+    set "CHECK_PORT=8091"
+    call :port_pid
     if defined PID (
-        echo [scheduler] Port 8091 occupied by PID=%PID% but unhealthy. Run stop-all.bat first.
+        echo [scheduler] Port 8091 occupied by PID=!PID! but unhealthy. Run stop-all.bat first.
     ) else (
-        call :start_py scheduler scheduler
-        call :wait_healthy 8091 90
+        set "SVC_NAME=scheduler"
+        set "SVC_DIR=scheduler"
+        call :start_py
+        set "WAIT_PORT=8091"
+        set "WAIT_SECS=90"
+        call :wait_healthy
         if !errorlevel! equ 0 ( echo [scheduler] Ready on port 8091 [OK] ) else ( echo [scheduler] Not ready in 90s, see scheduler\logs_start.log )
     )
 )
 
 rem 3.4 frontend (9000, vite dev server)
-call :port_pid 9000 PID
+set "CHECK_PORT=9000"
+call :port_pid
 if defined PID (
     echo [frontend] Already running on port 9000
 ) else (
@@ -134,11 +160,12 @@ if defined PID (
 rem 3.5 Wait for frontend
 set /a N=0
 :wait_fe
-call :port_pid 9000 PID
+set "CHECK_PORT=9000"
+call :port_pid
 if defined PID ( echo [frontend] Ready on port 9000 [OK] & goto :done )
 set /a N+=1
 if %N% GEQ 20 ( echo [frontend] Not ready in 40s, see logs-frontend.txt & goto :done )
-timeout /t 2 /nobreak >nul
+ping -n 3 127.0.0.1 >nul
 goto :wait_fe
 
 :done

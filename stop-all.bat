@@ -16,7 +16,7 @@ goto :main
 :stop_port
 set "PORT=%~1"
 set "PID="
-for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:":%PORT% .*LISTENING"') do set "PID=%%P"
+for /f %%P in ('powershell -NoProfile -Command "$c = Get-NetTCPConnection -LocalPort %PORT% -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if ($c) { $c.OwningProcess }" 2^>nul') do set "PID=%%P"
 if not defined PID (
     echo [port %PORT%] Not running
     exit /b 0
@@ -50,7 +50,7 @@ for %%P in (8089 8090 8091 9000) do call :stop_port %%P
 
 rem Fallback: sweep leftover python processes started from this project root
 rem (e.g. crashed-but-alive workers without a listening port).
-for /f "usebackq delims=" %%L in (`powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" ^| Where-Object { $_.CommandLine -like '*%ROOT%*main.py*' } ^| Select-Object -ExpandProperty ProcessId" 2^>nul`) do (
+for /f "usebackq delims=" %%L in (`powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | Where-Object { $_.CommandLine -like '*%ROOT%*main.py*' } | Select-Object -ExpandProperty ProcessId" 2^>nul`) do (
     echo [sweep] Stopping leftover python PID=%%L
     taskkill /F /T /PID %%L >nul 2>&1
 )
