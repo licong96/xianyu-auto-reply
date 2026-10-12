@@ -1,0 +1,14 @@
+
+> xianyu-admin-frontend@1.0.0 dev
+> vite --host 0.0.0.0
+
+
+  VITE v5.4.21  ready in 412 ms
+
+  ➜  Local:   http://localhost:9000/
+  ➜  Network: http://100.89.135.32:9000/
+  ➜  Network: http://192.168.50.46:9000/
+21:58:22 [vite] hmr update /src/pages/pan-browser/PanBrowser.tsx, /src/styles/globals.css
+22:01:12 [vite] hmr update /src/pages/pan-browser/PanBrowser.tsx, /src/styles/globals.css
+22:01:22 [vite] hmr update /src/pages/pan-browser/PanBrowser.tsx, /src/styles/globals.css
+22:01:53 [vite] hmr update /src/pages/pan-browser/PanBrowser.tsx, /src/styles/globals.css
