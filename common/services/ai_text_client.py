@@ -14,7 +14,7 @@ AI 文本生成通用客户端
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Optional
+from typing import Any, NamedTuple, Optional
 
 import httpx
 from loguru import logger
@@ -30,6 +30,18 @@ RETRY_BACKOFF_SECONDS = 1.0
 
 # 可重试的 HTTP 状态码：请求超时、限流与服务端错误
 RETRYABLE_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504}
+
+
+class ChatCompletionResult(NamedTuple):
+    """一次文案补全的结果
+
+    Attributes:
+        content: 模型输出的正文。
+        finish_reason: 结束原因。``length`` / ``max_tokens`` 表示输出被 token 上限截断。
+    """
+
+    content: str
+    finish_reason: str
 
 
 class AiCallError(RuntimeError):
@@ -76,6 +88,7 @@ def _build_payload(
     temperature: float,
     max_tokens: int,
     disable_thinking: bool,
+    json_mode: bool = False,
 ) -> dict[str, Any]:
     """组装 chat/completions 请求体
 
@@ -85,6 +98,7 @@ def _build_payload(
         temperature: 采样温度。
         max_tokens: 最大生成 token 数。
         disable_thinking: 是否显式关闭思考模式（qwen3 等模型需要，否则思考过程会挤占正文）。
+        json_mode: 是否要求模型只返回 JSON 对象。部分中转不支持该字段，调用方需在 400 时降级。
     Returns:
         请求体字典。
     """
@@ -97,6 +111,8 @@ def _build_payload(
     }
     if disable_thinking:
         payload["enable_thinking"] = False
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
     return payload
 
 
@@ -145,13 +161,13 @@ async def post_json(
 
 
 
-def _extract_content(data: dict[str, Any]) -> str:
-    """从响应体中取出模型输出的文本
+def _extract_result(data: dict[str, Any]) -> ChatCompletionResult:
+    """从响应体中取出模型输出和结束原因
 
     Args:
         data: chat/completions 响应体。
     Returns:
-        去除首尾空白的文本内容。
+        正文与 finish_reason。结束原因缺失时为空字符串。
     Raises:
         AiCallError: 没有 choices 或内容为空。
     """
@@ -159,7 +175,8 @@ def _extract_content(data: dict[str, Any]) -> str:
     if not choices:
         raise AiCallError("AI接口未返回任何结果")
 
-    message = (choices[0] or {}).get("message") or {}
+    choice = choices[0] or {}
+    message = choice.get("message") or {}
     content = message.get("content")
     if isinstance(content, list):
         # 数组 content 形态：拼接所有文本片段
@@ -170,7 +187,8 @@ def _extract_content(data: dict[str, Any]) -> str:
     text = str(content or "").strip()
     if not text:
         raise AiCallError("AI接口返回内容为空")
-    return text
+    finish_reason = str(choice.get("finish_reason") or "")
+    return ChatCompletionResult(content=text, finish_reason=finish_reason)
 
 
 async def request_json_with_retries(
@@ -226,11 +244,40 @@ async def chat_completion(
     max_tokens: int = 2048,
     timeout: float = DEFAULT_TEXT_TIMEOUT,
     client: Optional[httpx.AsyncClient] = None,
+    json_mode: bool = False,
 ) -> str:
+    """调用 OpenAI 兼容的 chat/completions，只返回正文。"""
+    result = await chat_completion_result(
+        base_url=base_url,
+        api_key=api_key,
+        model=model,
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        timeout=timeout,
+        client=client,
+        json_mode=json_mode,
+    )
+    return result.content
+
+
+async def chat_completion_result(
+    *,
+    base_url: str,
+    api_key: str,
+    model: str,
+    messages: list[dict[str, Any]],
+    temperature: float = 0.7,
+    max_tokens: int = 2048,
+    timeout: float = DEFAULT_TEXT_TIMEOUT,
+    client: Optional[httpx.AsyncClient] = None,
+    json_mode: bool = False,
+) -> ChatCompletionResult:
     """调用 OpenAI 兼容的 chat/completions 生成文本
 
-    收到 400 时按"字符串content+关闭思考 → 字符串content → 数组content+关闭思考 → 数组content"
-    四种形态依次降级，兼容 qwen3、多模态模型等对请求体的不同要求。
+    需要 JSON 时先带 ``response_format=json_object`` 请求。对方返回 400 时，
+    再按"字符串content+关闭思考 → 字符串content → 数组content+关闭思考 → 数组content"
+    四种形态降级，兼容不支持 JSON 模式的中转，以及 qwen3、多模态模型。
 
     Args:
         base_url: 接口基础地址（会自动剥掉 /chat/completions 等后缀）。
@@ -241,9 +288,10 @@ async def chat_completion(
         max_tokens: 最大生成 token 数。
         timeout: 单次请求超时（秒）。
         client: 复用的 httpx 客户端；为 None 时内部自建并在结束后关闭。
+        json_mode: 是否优先要求模型只返回 JSON 对象。
 
     Returns:
-        模型输出的文本。
+        正文和结束原因。
 
     Raises:
         AiCallError: 所有兼容形态都失败，或遇到不可重试错误。
@@ -251,28 +299,35 @@ async def chat_completion(
     url = build_openai_url(base_url, "/chat/completions")
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     array_messages = _messages_to_array_content(messages)
-    # (说明, 消息体, 是否关闭思考, 是否允许退避重试)
-    # 只有第一种形态做重试，避免"4 种形态 × 3 次请求"把单次生成拖到十几分钟
-    attempts = (
-        ("字符串content+关闭思考", messages, True, True),
-        ("字符串content", messages, False, False),
-        ("数组content+关闭思考", array_messages, True, False),
-        ("数组content", array_messages, False, False),
-    )
+    # (说明, 消息体, 是否关闭思考, 是否允许退避重试, 是否带 JSON 模式)
+    # 只有第一种可用形态做重试，避免多种形态连乘把单次生成拖到十几分钟
+    attempts: list[tuple[str, list[dict[str, Any]], bool, bool, bool]] = []
+    if json_mode:
+        attempts.append(("JSON模式", messages, True, True, True))
+    attempts.extend((
+        ("字符串content+关闭思考", messages, True, not json_mode, False),
+        ("字符串content", messages, False, False, False),
+        ("数组content+关闭思考", array_messages, True, False, False),
+        ("数组content", array_messages, False, False, False),
+    ))
 
-    logger.info(f"【AI铺货】调用文案接口 model={model} api_key长度={len(api_key or '')}")
+    logger.info(
+        f"【AI铺货】调用文案接口 model={model} api_key长度={len(api_key or '')} "
+        f"max_tokens={max_tokens} json_mode={json_mode}"
+    )
 
     owns_client = client is None
     http_client = client or httpx.AsyncClient(timeout=timeout)
     try:
         last_error: Optional[AiCallError] = None
-        for label, payload_messages, disable_thinking, allow_retry in attempts:
+        for label, payload_messages, disable_thinking, allow_retry, use_json_mode in attempts:
             payload = _build_payload(
                 model=model,
                 messages=payload_messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 disable_thinking=disable_thinking,
+                json_mode=use_json_mode,
             )
             try:
                 if allow_retry:
@@ -287,7 +342,7 @@ async def chat_completion(
                     logger.info(f"【AI铺货】{label} 被模型拒绝，尝试下一种兼容形态 model={model}")
                     continue
                 raise
-            return _extract_content(data)
+            return _extract_result(data)
         raise last_error or AiCallError("AI接口调用失败")
     finally:
         if owns_client:
@@ -296,8 +351,10 @@ async def chat_completion(
 
 __all__ = [
     "AiCallError",
+    "ChatCompletionResult",
     "DEFAULT_TEXT_TIMEOUT",
     "chat_completion",
+    "chat_completion_result",
     "post_json",
     "request_json_with_retries",
 ]

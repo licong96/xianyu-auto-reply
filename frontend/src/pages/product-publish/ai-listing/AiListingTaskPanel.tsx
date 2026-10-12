@@ -56,7 +56,7 @@ export function AiListingTaskPanel({ configs, task, onStartTracking, onResetTask
 
   const [configId, setConfigId] = useState<number>(configs[0]?.id || 0)
   const [keyword, setKeyword] = useState('')
-  const [count, setCount] = useState(5)
+  const [count, setCount] = useState(3)
   const [priceMode, setPriceMode] = useState<'fixed' | 'range'>('fixed')
   const [price, setPrice] = useState(9.9)
   const [priceMin, setPriceMin] = useState(9.9)

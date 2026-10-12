@@ -74,7 +74,7 @@ export default function AiListingScreen() {
   const [selectedConfigId, setSelectedConfigId] = useState<number | null>(null);
 
   const [keyword, setKeyword] = useState('');
-  const [countText, setCountText] = useState('5');
+  const [countText, setCountText] = useState('3');
   const [priceMode, setPriceMode] = useState<'fixed' | 'range'>('fixed');
   const [priceText, setPriceText] = useState('');
   const [priceMinText, setPriceMinText] = useState('');
@@ -412,7 +412,7 @@ export default function AiListingScreen() {
           <Input value={keyword} onChangeText={setKeyword} placeholder="如：iPhone 15 Pro 256G" maxLength={200} />
 
           <Text style={[styles.label, { color: c.textSecondary, marginTop: spacing.md }]}>条数（1~50）</Text>
-          <Input value={countText} onChangeText={setCountText} keyboardType="number-pad" placeholder="5" />
+          <Input value={countText} onChangeText={setCountText} keyboardType="number-pad" placeholder="3" />
 
           <Text style={[styles.label, { color: c.textSecondary, marginTop: spacing.md }]}>价格模式</Text>
           <View style={styles.chipRow}>
