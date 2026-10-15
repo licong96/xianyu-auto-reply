@@ -1488,6 +1488,26 @@ class DatabaseInitializer:
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='资料池表 - 资料池自动化流水线';
         """,
 
+        # CUSTOM: 多网盘并列查询与合并列表方案 - 资料池网盘链接子表
+        "xy_material_pool_pan_links": """
+            CREATE TABLE IF NOT EXISTS xy_material_pool_pan_links (
+                id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+                pool_id BIGINT NOT NULL COMMENT '所属资料池记录 ID（xy_material_pool.id）',
+                pan_type VARCHAR(20) NOT NULL COMMENT '网盘类型：quark/baidu，新盘加新取值',
+                pan_path VARCHAR(500) NOT NULL COMMENT '该盘上的完整路径',
+                fid VARCHAR(100) DEFAULT NULL COMMENT '该盘条目 id（分享查重用）',
+                file_size BIGINT DEFAULT NULL COMMENT '该盘上的文件大小（字节）',
+                pan_url VARCHAR(500) DEFAULT NULL COMMENT '该盘分享链接',
+                pan_code VARCHAR(20) DEFAULT NULL COMMENT '提取码（无则空）',
+                share_id VARCHAR(100) DEFAULT NULL COMMENT '分享 ID（撤销/巡检用）',
+                share_expire_at DATETIME DEFAULT NULL COMMENT '分享有效期',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+                UNIQUE KEY uq_mppl_pool_pan (pool_id, pan_type),
+                INDEX idx_mppl_pool (pool_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='资料池网盘链接子表 - 多网盘并列查询与合并列表方案';
+        """,
+
         # 38.1 定时求小红花执行日志表
         "xy_scheduled_red_flower_log": """
             CREATE TABLE IF NOT EXISTS `xy_scheduled_red_flower_log` (

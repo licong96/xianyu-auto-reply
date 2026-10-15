@@ -1,25 +1,27 @@
 """
-网盘浏览 API 路由 - 网盘浏览与直选上架
+网盘浏览 API 路由 - 多网盘并列查询与合并列表方案
 
 接口：
-1. GET  /pan/status    网盘连接状态（页面加载时检测凭证有效性）
-2. GET  /pan/entries   列出指定目录内容（附资料池导入状态，辅助人工判断）
-3. POST /pan/share     创建分享（资料池记录 + first_fid 双重查重，不重复创建）
-4. POST /pan/import    把网盘文件导入资料池（复用 xy_material_pool，source_type=quark-manual）
+1. GET  /pan/status    每个已启用网盘各查一次连接，返回 [{pan_type, ok, message}]
+2. GET  /pan/entries   并列列出各盘该路径，内存合并（NFC+lower 文件名），返回 drives + list
+3. POST /pan/share     body 带 locations，逐盘分享（资料池/子表/按 fid 反查三重查重）
+4. POST /pan/import    按路径命中或新建资料池记录，成功的分享写入 xy_material_pool_pan_links 子表
 
 设计要点：
-- 全部复用 QuarkPanClient（子进程调 kuake），同步子进程用 asyncio.to_thread 包裹避免阻塞事件循环
-- 网盘来源记录：source_url=quark://<网盘路径>（唯一键，天然防重），status=pending
-- 不做本地上传/下载
+- 网盘客户端走 app.services.pan.base 的 PanClient 协议与注册表，启用的盘由 PAN_ENABLED_PANS 决定
+- 某一盘整层查询失败只标 drives，不当作「没有文件」；全部失败才返回错误
+- 合并只发生在当前这一层；同名文件大小不同标 size_mismatch（前端默认不勾选双盘）
+- 主记录旧 pan_* 字段过渡期仍代表单盘链接；子表为空时卡券回退旧字段
 
 # CUSTOM: 网盘浏览与直选上架（新增文件）
+# CUSTOM: 多网盘并列查询与合并列表方案（改造）
 """
 from __future__ import annotations
 
 import asyncio
 import os
-from datetime import datetime, timedelta
-from typing import Any, Dict, Optional
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, Query
 from loguru import logger
@@ -31,66 +33,145 @@ from sqlalchemy import or_
 
 from app.api.deps import get_current_active_user, get_db_session
 from app.services.material_pool_service import _row_to_dict
-from app.services.pan.quark_pan_client import (
+from app.services.pan.base import (
     PanError,
-    QuarkPanClient,
-    _extract_share_url,
-    _lookup_share_id,
+    enabled_pan_types,
+    make_client,
+    merge_pan_entries,
 )
-from common.models.material_pool import STATUS_PENDING, MaterialPool
+from common.models.material_pool import (
+    STATUS_CRAWLED,
+    STATUS_FAILED,
+    STATUS_PENDING,
+    STATUS_UPLOADED,
+    MaterialPool,
+)
+from common.models.material_pool_link import MaterialPoolPanLink
 from common.models.user import User
 from common.schemas.common import ApiResponse
 
 SOURCE_TYPE_QUARK_MANUAL = "quark-manual"
+SOURCE_TYPE_PAN_MANUAL = "pan-manual"
 
 router = APIRouter(prefix="/pan", tags=["网盘"])
-
-
-def _source_url(pan_path: str) -> str:
-    """网盘来源记录的合成 source_url：quark:// + 网盘完整路径（唯一、可识别来源、防重）。"""
-    return f"quark://{pan_path}"
 
 
 def _share_days() -> int:
     return int(os.environ.get("KUAKE_SHARE_DAYS", "30"))
 
 
-def _make_client() -> QuarkPanClient:
-    return QuarkPanClient()
+def _source_url_variants(pan_type: str, pan_path: str) -> List[str]:
+    """一条网盘路径可能对应的历史 source_url 形态（命中旧记录用）。"""
+    return [f"{pan_type}://{pan_path}", f"pan://{pan_path}", pan_path]
 
 
-def _find_share_by_fid(shares_data: dict, fid: str) -> Optional[dict]:
-    """在 share-list 结果中按 first_fid（首个文件 fid）反查已有分享。"""
-    for item in (shares_data.get("data") or {}).get("list") or []:
-        if str(item.get("first_fid") or "") == fid:
-            return item
-    return None
-
-
-def _share_item_to_result(item: dict, message: str) -> ApiResponse:
-    expired_at = item.get("expired_at")
-    return ApiResponse(
-        success=True,
-        message=message,
-        data={
-            "share_url": item.get("share_url"),
-            "pan_code": item.get("pwd_id"),  # 分享提取码（无提取码时该字段为空/无）
-            "share_id": item.get("share_id"),
-            "share_expire_at": datetime.fromtimestamp(expired_at / 1000).isoformat() if expired_at else None,
-        },
+async def _find_pool_by_pan_path(
+    session: AsyncSession, owner_id: int, pan_type: str, pan_path: str
+) -> Optional[MaterialPool]:
+    """按网盘路径命中资料池记录：source_url（各形态）或 pan_path 比对。"""
+    variants = _source_url_variants(pan_type, pan_path)
+    stmt = (
+        select(MaterialPool)
+        .where(
+            MaterialPool.owner_id == owner_id,
+            MaterialPool.is_deleted == False,  # noqa: E712
+            or_(MaterialPool.source_url.in_(variants), MaterialPool.pan_path == pan_path),
+        )
+        .limit(1)
     )
+    return (await session.execute(stmt)).scalar_one_or_none()
 
+
+async def _find_link_by_pan_path(
+    session: AsyncSession, owner_id: int, pan_type: str, pan_path: str
+) -> Optional[MaterialPoolPanLink]:
+    """按网盘路径命中子表链接（join 主表过滤 owner），用于跨记录复用分享。"""
+    stmt = (
+        select(MaterialPoolPanLink)
+        .join(MaterialPool, MaterialPoolPanLink.pool_id == MaterialPool.id)
+        .where(
+            MaterialPool.owner_id == owner_id,
+            MaterialPool.is_deleted == False,  # noqa: E712
+            MaterialPoolPanLink.pan_type == pan_type,
+            MaterialPoolPanLink.pan_path == pan_path,
+            MaterialPoolPanLink.pan_url.isnot(None),
+        )
+        .limit(1)
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+def _share_to_dict(pan_type: str, share: Dict[str, Any]) -> Dict[str, Any]:
+    expire_at = share.get("share_expire_at")
+    return {
+        "pan_type": pan_type,
+        "share_url": share.get("share_url"),
+        "pan_code": share.get("pan_code"),
+        "share_id": share.get("share_id"),
+        "share_expire_at": expire_at.isoformat() if isinstance(expire_at, datetime) else expire_at,
+    }
+
+
+async def _ensure_share_for_location(
+    session: AsyncSession, owner_id: int, location: Dict[str, Any]
+) -> Dict[str, Any]:
+    """确保某个 location 有分享链接。查重顺序：子表/主记录 → 按 fid 反查 → 新建。"""
+    pan_type = location["pan_type"]
+    path = location["path"]
+    fid = location.get("fid")
+
+    # 1) 资料池主记录或子表已有该路径的分享 → 直接复用
+    row = await _find_pool_by_pan_path(session, owner_id, pan_type, path)
+    if row and row.pan_url:
+        return _share_to_dict(pan_type, {
+            "share_url": row.pan_url,
+            "pan_code": row.pan_code,
+            "share_id": row.share_id,
+            "share_expire_at": row.share_expire_at,
+        })
+    link = await _find_link_by_pan_path(session, owner_id, pan_type, path)
+    if link:
+        return _share_to_dict(pan_type, {
+            "share_url": link.pan_url,
+            "pan_code": link.pan_code,
+            "share_id": link.share_id,
+            "share_expire_at": link.share_expire_at,
+        })
+
+    client = make_client(pan_type)
+
+    # 2) 按 fid 反查已有分享
+    if fid:
+        existing = await asyncio.to_thread(client.find_share, fid=fid, path=path)
+        if existing and existing.get("share_url"):
+            return _share_to_dict(pan_type, existing)
+
+    # 3) 新建分享
+    share = await asyncio.to_thread(
+        lambda: client.create_share(path, days=_share_days(), passcode=False)
+    )
+    return _share_to_dict(pan_type, share)
+
+
+# ---------- 连接状态 ----------
 
 @router.get("/status", response_model=ApiResponse)
 async def pan_status(current_user: User = Depends(get_current_active_user)) -> Dict[str, Any]:
-    """网盘连接状态：调 kuake user，失败说明凭证失效或二进制不可用。"""
-    try:
-        client = _make_client()
-        data = await asyncio.to_thread(client.user_info)
-    except Exception as exc:  # noqa: BLE001 - 凭证失效/二进制缺失统一提示
-        return ApiResponse(success=False, message=f"网盘连接失败：{exc}", data=None)
-    return ApiResponse(success=True, message="ok", data=(data.get("data") or {}))
+    """每个已启用网盘各查一次连接。某盘失败不影响其他盘。"""
 
+    async def _check(pan_type: str) -> Dict[str, Any]:
+        try:
+            client = make_client(pan_type)
+            await asyncio.to_thread(client.status_check)
+            return {"pan_type": pan_type, "ok": True, "message": ""}
+        except Exception as exc:  # noqa: BLE001 - 凭证失效/二进制缺失统一提示
+            return {"pan_type": pan_type, "ok": False, "message": str(exc)}
+
+    drives = await asyncio.gather(*[_check(p) for p in enabled_pan_types()])
+    return ApiResponse(success=True, message="ok", data={"drives": list(drives)})
+
+
+# ---------- 目录列举与合并 ----------
 
 @router.get("/entries", response_model=ApiResponse)
 async def pan_entries(
@@ -98,62 +179,60 @@ async def pan_entries(
     current_user: User = Depends(get_current_active_user),
     session: AsyncSession = Depends(get_db_session),
 ) -> Dict[str, Any]:
-    """列出指定目录内容，并批量比对资料池导入状态（每行附 pool 字段辅助人工判断）。"""
-    try:
-        client = _make_client()
-        result = await asyncio.to_thread(client.list_dir, path)
-    except Exception as exc:  # noqa: BLE001
-        return ApiResponse(success=False, message=f"列出网盘目录失败：{exc}", data=None)
+    """并列列出各盘该路径并内存合并；某盘整层失败标 drives，不当作「没有文件」。"""
 
-    entries = (result.get("data") or {}).get("list") or []
+    async def _list(pan_type: str) -> Dict[str, Any]:
+        try:
+            client = make_client(pan_type)
+            entries = await asyncio.to_thread(client.list_entries, path)
+            return {"pan_type": pan_type, "ok": True, "entries": entries, "error": None}
+        except Exception as exc:  # noqa: BLE001
+            return {"pan_type": pan_type, "ok": False, "entries": [], "error": str(exc)}
 
-    # 批量比对：quark-manual 行按 source_url=quark://路径，爬虫行按 pan_path，都已导入的行附 {pool_id, status}
-    urls = [_source_url(e["path"]) for e in entries if e.get("path")]
-    paths = [e["path"] for e in entries if e.get("path")]
+    results = await asyncio.gather(*[_list(p) for p in enabled_pan_types()])
+    drives = [
+        {"pan_type": r["pan_type"], "ok": r["ok"], **({"error": r["error"]} if r["error"] else {})}
+        for r in results
+    ]
+    if not any(r["ok"] for r in results):
+        first_err = next((r["error"] for r in results if r["error"]), "未知错误")
+        return ApiResponse(success=False, message=f"所有网盘查询失败：{first_err}", data=None)
+
+    per_pan = {r["pan_type"]: r["entries"] for r in results if r["ok"]}
+    merged = merge_pan_entries(per_pan)
+
+    # 批量比对资料池：每个 location 按路径命中（pan://、<pan_type>://、pan_path）
     status_map: Dict[str, Dict[str, Any]] = {}
-    if urls:
-        stmt = select(MaterialPool.id, MaterialPool.source_url, MaterialPool.pan_path, MaterialPool.status).where(
-            MaterialPool.owner_id == current_user.id,
-            MaterialPool.is_deleted == False,  # noqa: E712
-            or_(MaterialPool.source_url.in_(urls), MaterialPool.pan_path.in_(paths)),
-        )
-        for pool_id, surl, ppath, st in (await session.execute(stmt)).all():
-            info = {"pool_id": pool_id, "status": st}
-            if surl:
-                status_map[surl] = info
-            if ppath:
-                status_map.setdefault(_source_url(ppath), info)  # 同一行的网盘路径也指向该记录
-    for e in entries:
-        e["pool"] = status_map.get(_source_url(e["path"])) if e.get("path") else None
+    seen_paths = set()
+    for row in merged:
+        for loc in row["locations"]:
+            key = (loc["pan_type"], loc["path"])
+            if key in seen_paths:
+                continue
+            seen_paths.add(key)
+            pool = await _find_pool_by_pan_path(session, current_user.id, loc["pan_type"], loc["path"])
+            if pool:
+                status_map[f"{loc['pan_type']}://{loc['path']}"] = {"pool_id": pool.id, "status": pool.status}
+    for row in merged:
+        for loc in row["locations"]:
+            loc["pool"] = status_map.get(f"{loc['pan_type']}://{loc['path']}") or None
 
-    return ApiResponse(success=True, message="ok", data={"path": path, "list": entries})
+    return ApiResponse(success=True, message="ok", data={"path": path, "drives": drives, "list": merged})
 
 
-async def _ensure_share(client: QuarkPanClient, path: str, fid: Optional[str]) -> dict:
-    """确保 path 有分享链接：share-list 按 first_fid 反查（带 fid 时）→ 新建。返回统一结果 dict。"""
-    if fid:
-        shares = await asyncio.to_thread(client.share_list)
-        item = _find_share_by_fid(shares, fid)
-        if item:
-            return _share_item_to_result(item, "已存在该文件的分享，直接复用").data
-    days = _share_days()
-    data = await asyncio.to_thread(lambda: client.share(path, days=days, passcode=False))
-    url, code, sid = _extract_share_url(data)
-    if not url:
-        raise PanError(f"分享成功但未解析到链接：{str(data)[:300]}")
-    if not sid:
-        sid = _lookup_share_id(client, url)
-    return {
-        "share_url": url,
-        "pan_code": code,
-        "share_id": sid,
-        "share_expire_at": (datetime.now() + timedelta(days=days)).isoformat(),
-    }
+# ---------- 分享 ----------
+
+class LocationItem(BaseModel):
+    pan_type: str = Field(..., min_length=1, max_length=20, description="网盘类型：quark/baidu")
+    path: str = Field(..., min_length=1, max_length=1000, description="该盘上的完整路径")
+    fid: Optional[str] = Field(None, max_length=100, description="该盘条目 id（查重用）")
 
 
 class ShareRequest(BaseModel):
-    path: str = Field(..., min_length=1, max_length=1000, description="网盘文件/文件夹完整路径")
-    fid: Optional[str] = Field(None, max_length=100, description="目录条目 fid（用于 share-list 反查查重）")
+    locations: List[LocationItem] = Field(default_factory=list, description="要分享的位置列表")
+    # 兼容旧调用：单盘单路径直传
+    path: Optional[str] = Field(None, max_length=1000)
+    fid: Optional[str] = Field(None, max_length=100)
 
 
 @router.post("/share", response_model=ApiResponse)
@@ -162,49 +241,56 @@ async def pan_share(
     current_user: User = Depends(get_current_active_user),
     session: AsyncSession = Depends(get_db_session),
 ) -> Dict[str, Any]:
-    """创建分享。查重顺序：资料池已有记录（带 pan_url）→ share-list 按 first_fid 反查 → 新建。"""
-    try:
-        # 1) 资料池已有该文件的记录且带分享链接 → 直接复用
-        # （quark-manual 行按 source_url 命中，爬虫行按 pan_path 命中）
-        stmt = (
-            select(MaterialPool)
-            .where(
-                MaterialPool.owner_id == current_user.id,
-                MaterialPool.is_deleted == False,  # noqa: E712
-                or_(
-                    MaterialPool.source_url == _source_url(req.path),
-                    MaterialPool.pan_path == req.path,
-                ),
-            )
-            .limit(1)
-        )
-        row = (await session.execute(stmt)).scalar_one_or_none()
-        if row and row.pan_url:
-            return ApiResponse(
-                success=True,
-                message="资料池已有该文件的分享链接",
-                data={
-                    "share_url": row.pan_url,
-                    "pan_code": row.pan_code,
-                    "share_id": row.share_id,
-                    "share_expire_at": row.share_expire_at.isoformat() if row.share_expire_at else None,
-                },
-            )
+    """逐盘创建分享：成功的返回链接，失败的单独标出可重试。查重不重创。"""
+    locations = [loc.model_dump() for loc in req.locations]
+    if not locations and req.path:
+        # 旧版调用兼容：默认夸克
+        locations = [{"pan_type": "quark", "path": req.path, "fid": req.fid}]
+    if not locations:
+        return ApiResponse(success=False, message="locations 不能为空", data=None)
 
-        # 2) 3) share-list 反查 / 新建
-        client = _make_client()
-        result = await _ensure_share(client, req.path, req.fid)
-        return ApiResponse(success=True, message="分享已就绪", data=result)
-    except Exception as exc:  # noqa: BLE001
-        return ApiResponse(success=False, message=f"创建分享失败：{exc}", data=None)
+    shares = []
+    for loc in locations:
+        try:
+            shares.append({"pan_type": loc["pan_type"], "ok": True,
+                           **await _ensure_share_for_location(session, current_user.id, loc)})
+        except Exception as exc:  # noqa: BLE001 - 单侧失败不拖垮其他盘
+            logger.warning(f"[pan] 分享失败 {loc['pan_type']}:{loc['path']}：{exc}")
+            shares.append({"pan_type": loc["pan_type"], "ok": False, "error": str(exc)})
 
+    ok_count = sum(1 for s in shares if s["ok"])
+    if ok_count == 0:
+        return ApiResponse(success=False, message=f"所有网盘分享失败：{shares[0].get('error')}", data={"shares": shares})
+    return ApiResponse(success=True, message=f"{ok_count}/{len(shares)} 个网盘分享成功", data={"shares": shares})
+
+
+# ---------- 导入资料池 ----------
 
 class PanImportRequest(BaseModel):
-    pan_path: str = Field(..., min_length=1, max_length=1000, description="网盘文件完整路径")
     file_name: str = Field(..., min_length=1, max_length=300, description="文件名（写入 paper_name）")
     file_size: Optional[int] = Field(None, ge=0, description="文件大小（字节）")
-    fid: Optional[str] = Field(None, max_length=100, description="目录条目 fid（分享查重用，避免重复创建分享）")
     create_share: bool = Field(True, description="导入时自动创建分享链接")
+    locations: List[LocationItem] = Field(..., min_length=1, description="该文件实际存在的网盘位置")
+    # 兼容旧调用：单盘单路径直传
+    pan_path: Optional[str] = Field(None, max_length=1000)
+    fid: Optional[str] = Field(None, max_length=100)
+
+
+def _loc_to_link(pool_id: int, loc: Dict[str, Any], share: Optional[Dict[str, Any]]) -> MaterialPoolPanLink:
+    """把 location + 分享结果合成子表行（share 为 None 时只落位置信息）。"""
+    expire_raw = (share or {}).get("share_expire_at")
+    expire_at = datetime.fromisoformat(expire_raw) if isinstance(expire_raw, str) else expire_raw
+    return MaterialPoolPanLink(
+        pool_id=pool_id,
+        pan_type=loc["pan_type"],
+        pan_path=loc["path"],
+        fid=loc.get("fid"),
+        file_size=loc.get("size"),
+        pan_url=(share or {}).get("share_url"),
+        pan_code=(share or {}).get("pan_code"),
+        share_id=(share or {}).get("share_id"),
+        share_expire_at=expire_at,
+    )
 
 
 @router.post("/import", response_model=ApiResponse)
@@ -213,84 +299,131 @@ async def pan_import(
     current_user: User = Depends(get_current_active_user),
     session: AsyncSession = Depends(get_db_session),
 ) -> Dict[str, Any]:
-    """把网盘文件导入资料池：已有记录直接返回（幂等，爬虫行按 pan_path 命中）；
-    命中已有记录但无分享链接且要求建分享时，补齐网盘信息并置待审核。create_share 时先建分享再落库，避免半截状态。"""
-    surl = _source_url(req.pan_path)
-    stmt = (
-        select(MaterialPool)
-        .where(
-            MaterialPool.owner_id == current_user.id,
-            MaterialPool.is_deleted == False,  # noqa: E712
-            or_(
-                MaterialPool.source_url == surl,
-                MaterialPool.pan_path == req.pan_path,
-            ),
-        )
-        .limit(1)
-    )
+    """把网盘文件导入资料池：按任一位置路径命中已有记录则补链，否则新建；
+    成功的分享写入子表。全部失败不落库，避免无链接的半截记录。"""
+    locations = [loc.model_dump() for loc in req.locations]
+    if req.pan_path:
+        locations = [{"pan_type": "quark", "path": req.pan_path,
+                      "fid": req.fid, "size": req.file_size}] + [
+            l for l in locations if l["path"] != req.pan_path
+        ]
+    if not locations:
+        return ApiResponse(success=False, message="locations 不能为空", data=None)
 
-    existing = (await session.execute(stmt)).scalar_one_or_none()
-    if existing:
-        if existing.pan_url or not req.create_share:
-            return ApiResponse(success=True, message="该文件已在资料池中", data=_row_to_dict(existing))
-        # 命中已有记录（如爬虫行）但尚无分享链接：建分享后补齐网盘信息，收敛到待审核
-        try:
-            client = _make_client()
-            result = await _ensure_share(client, req.pan_path, req.fid)
-            raw_expire = result.get("share_expire_at")
-            existing.pan_url = result.get("share_url")
-            existing.pan_code = result.get("pan_code")
-            existing.share_id = result.get("share_id")
-            existing.share_expire_at = datetime.fromisoformat(raw_expire) if raw_expire else None
-            existing.status = STATUS_PENDING
-            await session.commit()
-            await session.refresh(existing)
-            logger.info(f"[pan] 已有记录补齐网盘信息：pool_id={existing.id} path={req.pan_path}")
-            return ApiResponse(success=True, message="该文件已在资料池中，已补齐网盘分享信息", data=_row_to_dict(existing))
-        except Exception as exc:  # noqa: BLE001
-            return ApiResponse(success=False, message=f"创建分享失败：{exc}", data=None)
+    # 提前取 id：commit/rollback 后 user 属性过期，异步会话不能懒加载
+    owner_id = current_user.id
 
-    share_url = share_code = share_id = None
-    expire_at = None
+    # 逐盘确保分享（create_share=False 时跳过，沿用已有链接）
+    shares: Dict[str, Dict[str, Any]] = {}
     if req.create_share:
-        try:
-            client = _make_client()
-            result = await _ensure_share(client, req.pan_path, req.fid)
-            share_url = result.get("share_url")
-            share_code = result.get("pan_code")
-            share_id = result.get("share_id")
-            raw_expire = result.get("share_expire_at")
-            expire_at = datetime.fromisoformat(raw_expire) if raw_expire else None
-        except Exception as exc:  # noqa: BLE001 - 分享失败不落库，避免无链接的半截记录
-            return ApiResponse(success=False, message=f"创建分享失败：{exc}", data=None)
+        for loc in locations:
+            try:
+                shares[loc["pan_type"]] = await _ensure_share_for_location(session, owner_id, loc)
+            except Exception as exc:  # noqa: BLE001 - 单侧失败保留其他盘
+                logger.warning(f"[pan] import 分享失败 {loc['pan_type']}:{loc['path']}：{exc}")
+        if not shares:
+            return ApiResponse(success=False, message="所有网盘创建分享失败，未导入", data=None)
 
-    row = MaterialPool(
-        owner_id=current_user.id,
-        paper_name=req.file_name,
-        source_url=surl,
-        source_type=SOURCE_TYPE_QUARK_MANUAL,
-        file_size=req.file_size,
-        pan_type="quark",
-        pan_path=req.pan_path,
-        pan_url=share_url,
-        pan_code=share_code,
-        share_id=share_id,
-        share_expire_at=expire_at,
-        status=STATUS_PENDING,
-    )
-    session.add(row)
+    # 命中已有记录：任一位置路径能命中即同一商品
+    existing: Optional[MaterialPool] = None
+    for loc in locations:
+        existing = await _find_pool_by_pan_path(session, owner_id, loc["pan_type"], loc["path"])
+        if existing:
+            break
+
+    existed = existing is not None
+    if not existing:
+        first_ok = next(iter(shares.values()), None)
+        first_loc = locations[0]
+        source_type = (
+            f"{first_loc['pan_type']}-manual" if len(locations) == 1 else SOURCE_TYPE_PAN_MANUAL
+        )
+        existing = MaterialPool(
+            owner_id=owner_id,
+            paper_name=req.file_name,
+            source_url=f"pan://{first_loc['path']}",
+            source_type=source_type,
+            file_size=req.file_size,
+            pan_type=first_loc["pan_type"],
+            pan_path=first_loc["path"],
+            pan_url=(first_ok or {}).get("share_url"),
+            pan_code=(first_ok or {}).get("pan_code"),
+            share_id=(first_ok or {}).get("share_id"),
+            share_expire_at=datetime.fromisoformat(first_ok["share_expire_at"])
+            if first_ok and isinstance(first_ok.get("share_expire_at"), str) else None,
+            status=STATUS_PENDING,
+        )
+        session.add(existing)
+        await session.flush()  # 先取主键，子表写入时 pool_id 才有值
+
+    # 子表落链：已有 (pool_id, pan_type) 则更新，否则插入
+    stmt = select(MaterialPoolPanLink).where(MaterialPoolPanLink.pool_id == existing.id)
+    link_rows = (await session.execute(stmt)).scalars().all() if existed else []
+    link_by_type = {l.pan_type: l for l in link_rows}
+    for loc in locations:
+        share = shares.get(loc["pan_type"])
+        if share is None and not existed:
+            continue  # 新建记录且该盘无分享：不写入
+        link = link_by_type.get(loc["pan_type"])
+        if link:
+            if share:
+                link.fid = loc.get("fid") or link.fid
+                link.file_size = loc.get("size") or link.file_size
+                link.pan_url = share.get("share_url")
+                link.pan_code = share.get("pan_code")
+                link.share_id = share.get("share_id")
+                if isinstance(share.get("share_expire_at"), str):
+                    link.share_expire_at = datetime.fromisoformat(share["share_expire_at"])
+        else:
+            session.add(_loc_to_link(existing.id, loc, share))
+
+    # 旧记录收敛：主记录还没有链接且新分享成功 → 补齐旧字段并置待审核
+    if existed and not existing.pan_url:
+        first_ok = next(iter(shares.values()), None)
+        if first_ok:
+            first_loc = next(l for l in locations if l["pan_type"] == next(iter(shares)))
+            existing.pan_url = first_ok.get("share_url")
+            existing.pan_code = first_ok.get("pan_code")
+            existing.share_id = first_ok.get("share_id")
+            if isinstance(first_ok.get("share_expire_at"), str):
+                existing.share_expire_at = datetime.fromisoformat(first_ok["share_expire_at"])
+            existing.pan_type = first_loc["pan_type"]
+            existing.pan_path = first_loc["path"]
+            if existing.status in (STATUS_CRAWLED, STATUS_UPLOADED, STATUS_FAILED):
+                existing.status = STATUS_PENDING
+            existing.error_message = None
+
     try:
         await session.commit()
     except IntegrityError:
         # 并发兜底：唯一键冲突 → 返回已存在记录
         await session.rollback()
-        existing = (await session.execute(stmt)).scalar_one_or_none()
-        logger.info(f"[pan] import 并发冲突，返回已存在记录：{surl}")
-        return ApiResponse(
-            success=True,
-            message="该文件已在资料池中",
-            data=_row_to_dict(existing) if existing else None,
-        )
-    await session.refresh(row)
-    logger.info(f"[pan] 网盘文件已导入资料池：{surl} -> pool_id={row.id}")
-    return ApiResponse(success=True, message="已导入资料池", data=_row_to_dict(row))
+        existing = None
+        for loc in locations:
+            existing = await _find_pool_by_pan_path(session, owner_id, loc["pan_type"], loc["path"])
+            if existing:
+                break
+        logger.info(f"[pan] import 并发冲突，返回已存在记录：{req.file_name}")
+        existed = True
+    if existing:
+        await session.refresh(existing)
+
+    message = "该文件已在资料池中" if existed else "已导入资料池"
+    logger.info(f"[pan] 网盘文件导入资料池：{req.file_name} -> pool_id={existing.id}（{message}）")
+    link_stmt = (
+        select(MaterialPoolPanLink)
+        .where(MaterialPoolPanLink.pool_id == existing.id)
+        .order_by(MaterialPoolPanLink.id)
+    )
+    pan_links = [
+        {
+            "pan_type": l.pan_type,
+            "pan_path": l.pan_path,
+            "pan_url": l.pan_url,
+            "pan_code": l.pan_code,
+            "share_id": l.share_id,
+            "share_expire_at": l.share_expire_at.isoformat() if l.share_expire_at else None,
+        }
+        for l in (await session.execute(link_stmt)).scalars().all()
+    ]
+    return ApiResponse(success=True, message=message, data=_row_to_dict(existing, pan_links))

@@ -44,6 +44,8 @@ from common.models.settlement_record import SettlementRecord
 from common.models.product_material import ProductMaterial
 # CUSTOM: 资料池自动化流水线（新增表，合并作者更新零冲突）
 from common.models.material_pool import MaterialPool
+# CUSTOM: 多网盘并列查询与合并列表方案（新增表，合并作者更新零冲突）
+from common.models.material_pool_link import MaterialPoolPanLink
 from common.models.publish_log import PublishLog
 from common.models.publish_address import PublishAddress
 from common.models.user_publish_address import UserPublishAddress
@@ -116,6 +118,8 @@ __all__ = [
     "SettlementRecord",
     "AgentOrder",
     "ProductMaterial",
+    "MaterialPool",
+    "MaterialPoolPanLink",
     "PublishLog",
     "PublishAddress",
     "UserPublishAddress",

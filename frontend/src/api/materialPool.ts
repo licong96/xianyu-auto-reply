@@ -15,6 +15,15 @@ const PREFIX = '/api/v1/material-pool'
 
 // ==================== 类型定义 ====================
 
+export interface MaterialPoolPanLink {
+  pan_type: string
+  pan_path: string
+  pan_url: string | null
+  pan_code: string | null
+  share_id: string | null
+  share_expire_at: string | null
+}
+
 export interface MaterialPoolItem {
   id: number
   paper_name: string
@@ -31,6 +40,8 @@ export interface MaterialPoolItem {
   file_size: number | null
   pan_url: string | null
   pan_code: string | null
+  /** 多网盘链接子表（空数组时回退 pan_url 单链接展示） */
+  pan_links: MaterialPoolPanLink[]
   share_expire_at: string | null
   title: string | null
   description: string | null

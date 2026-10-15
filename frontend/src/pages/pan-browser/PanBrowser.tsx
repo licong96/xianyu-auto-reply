@@ -1,13 +1,14 @@
 /**
- * 网盘管理页面 - 网盘浏览与直选上架
+ * 网盘管理页面 - 多网盘并列查询与合并列表方案
  *
  * 功能：
- * 1. 面包屑 + 单层表格逐层下钻浏览夸克网盘（一层一次接口调用）
- * 2. 文件/文件夹创建分享链接（查重，弹窗显示 + 复制）
- * 3. 选中文件补充信息（标题/售价/描述/封面/学校/年份/年级）一键导入资料池
- * 4. 「资料池状态」列标记已导入文件，辅助人工判断
+ * 1. 面包屑 + 单层表格逐层下钻浏览多网盘（当前层实时并列查询、按文件名合并）
+ * 2. 顶部逐盘连接状态：某盘登录失效单独标出，不当作「没有文件」
+ * 3. 文件名相同收成一行，行内标出实际在哪些盘；大小不一致标红、默认不双盘发货
+ * 4. 分享/上架只处理该行实际存在的盘，多盘链接写入同一张卡券
+ * 5. 「资料池状态」列标记已导入文件；已导入的再上架会给已有记录补链
  *
- * 路径状态写进 URL（?path=），刷新不丢位置；文件夹可浏览、分享，也可整目录分享后上架。
+ * 路径状态写进 URL（?path=），刷新不丢位置。
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
@@ -34,8 +35,10 @@ import {
   getPanEntries,
   getPanStatus,
   importPanFile,
+  type PanDriveStatus,
   type PanEntry,
-  type PanShareResult,
+  type PanLocation,
+  type PanShareItem,
 } from '@/api/panBrowser'
 import { updateMaterialPool, uploadMaterialPoolCover } from '@/api/materialPool'
 import { PageLoading } from '@/components/common/Loading'
@@ -43,6 +46,11 @@ import { useUIStore } from '@/store/uiStore'
 import { getApiErrorMessage } from '@/utils/request'
 
 const DEFAULT_PATH = '/'
+
+const PAN_LABELS: Record<string, string> = {
+  quark: '夸克',
+  baidu: '百度',
+}
 
 const POOL_STATUS_LABELS: Record<string, string> = {
   crawled: '已采集',
@@ -64,6 +72,20 @@ const POOL_STATUS_CLASSES: Record<string, string> = {
   listed: 'bg-green-50 text-green-600 dark:bg-green-900/30 dark:text-green-400',
   rejected: 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400',
   failed: 'bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-400',
+}
+
+function panLabel(panType: string) {
+  return PAN_LABELS[panType] || panType
+}
+
+/** 行的资料池状态：取第一个命中的 location */
+function entryPool(entry: PanEntry) {
+  return entry.locations.find((l) => l.pool)?.pool || null
+}
+
+/** 文件夹导航路径：两个盘结构一致，取第一个 location */
+function entryPath(entry: PanEntry) {
+  return entry.locations[0]?.path || '/'
 }
 
 function formatFileSize(size?: number | null) {
@@ -149,15 +171,15 @@ export function PanBrowser() {
   const [searchParams, setSearchParams] = useSearchParams()
   const currentPath = searchParams.get('path') || DEFAULT_PATH
 
-  const [connState, setConnState] = useState<'checking' | 'ok' | 'fail'>('checking')
-  const [connMessage, setConnMessage] = useState('')
+  const [drives, setDrives] = useState<PanDriveStatus[]>([])
+  const [connChecked, setConnChecked] = useState(false)
   const [entries, setEntries] = useState<PanEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [initialized, setInitialized] = useState(false)
 
   // 弹窗状态
   const [shareEntry, setShareEntry] = useState<PanEntry | null>(null)
-  const [shareResult, setShareResult] = useState<PanShareResult | null>(null)
+  const [shareResults, setShareResults] = useState<PanShareItem[] | null>(null)
   const [sharing, setSharing] = useState(false)
   const [importEntry, setImportEntry] = useState<PanEntry | null>(null)
 
@@ -180,6 +202,21 @@ export function PanBrowser() {
     return items
   }, [currentPath])
 
+  const loadStatus = useCallback(async () => {
+    try {
+      const res = await getPanStatus()
+      if (res.success && res.data) {
+        setDrives(res.data.drives || [])
+      } else {
+        setDrives([])
+      }
+    } catch {
+      setDrives([])
+    } finally {
+      setConnChecked(true)
+    }
+  }, [])
+
   const loadEntries = useCallback(
     async (path: string) => {
       setLoading(true)
@@ -187,6 +224,8 @@ export function PanBrowser() {
         const res = await getPanEntries(path)
         if (res.success && res.data) {
           setEntries(res.data.list)
+          setDrives(res.data.drives || [])
+          setConnChecked(true)
         } else {
           setEntries([])
           addToast({ type: 'error', message: res.message || '加载网盘目录失败' })
@@ -203,19 +242,7 @@ export function PanBrowser() {
   )
 
   useEffect(() => {
-    getPanStatus()
-      .then((res) => {
-        if (res.success) {
-          setConnState('ok')
-        } else {
-          setConnState('fail')
-          setConnMessage(res.message || '网盘连接失败')
-        }
-      })
-      .catch(() => {
-        setConnState('fail')
-        setConnMessage('网盘状态检查请求失败')
-      })
+    loadStatus()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -232,13 +259,24 @@ export function PanBrowser() {
     }
   }
 
-  const handleShare = async () => {
+  /** 创建分享：可只传部分 location（单侧重试） */
+  const handleShare = async (locations: PanLocation[]) => {
     if (!shareEntry) return
     setSharing(true)
     try {
-      const res = await createPanShare(shareEntry.path, shareEntry.fid)
+      const res = await createPanShare(
+        locations.map((l) => ({ pan_type: l.pan_type, path: l.path, fid: l.fid }))
+      )
       if (res.success && res.data) {
-        setShareResult(res.data)
+        setShareResults((prev) => {
+          const next = [...(prev || [])]
+          for (const item of res.data!.shares) {
+            const idx = next.findIndex((s) => s.pan_type === item.pan_type)
+            if (idx >= 0) next[idx] = item
+            else next.push(item)
+          }
+          return next
+        })
         loadEntries(currentPath)
       } else {
         addToast({ type: 'error', message: res.message || '创建分享失败' })
@@ -257,18 +295,20 @@ export function PanBrowser() {
     })
   }, [entries])
 
-  if (!initialized) {
+  if (!initialized || !connChecked) {
     return <PageLoading />
   }
 
   const parentPath = currentPath === '/' ? null : currentPath.slice(0, currentPath.lastIndexOf('/')) || '/'
+  const failedDrives = drives.filter((d) => !d.ok)
+  const okDrives = drives.filter((d) => d.ok)
 
   return (
     <div className="space-y-4">
       <div className="page-header flex-between">
         <div>
           <h1 className="page-title">网盘管理</h1>
-          <p className="page-description">浏览夸克网盘，分享链接，或把文件补充信息后直选上架到资料池</p>
+          <p className="page-description">浏览多网盘（同层并列合并），分享链接，或把文件补充信息后直选上架到资料池</p>
         </div>
         <button onClick={() => loadEntries(currentPath)} className="btn-ios-secondary" disabled={loading}>
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
@@ -276,35 +316,36 @@ export function PanBrowser() {
         </button>
       </div>
 
-      {connState === 'checking' && (
-        <div className="vben-card">
-          <div className="vben-card-body flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400">
-            <Loader2 className="w-4 h-4 animate-spin" />
-            正在检测网盘连接状态...
-          </div>
-        </div>
-      )}
-
-      {connState === 'fail' && (
+      {/* 各盘连接状态：失败的盘单独标出，成功的盘收敛为一行 */}
+      {failedDrives.length > 0 && (
         <div className="vben-card border-red-200 dark:border-red-900">
           <div className="vben-card-body flex items-start gap-2 text-sm text-red-600 dark:text-red-400">
             <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-            <div>
-              <div className="font-medium">网盘连接失败</div>
-              <div className="mt-0.5">{connMessage}</div>
-              <div className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                请检查 kuake_cli/.env 中的 KUAKE_COOKIE 是否过期，以及 KUAKE_BIN 配置是否正确。
+            <div className="space-y-1">
+              {failedDrives.map((d) => (
+                <div key={d.pan_type}>
+                  <span className="font-medium">{panLabel(d.pan_type)}网盘连接失败：</span>
+                  {d.error || '未知错误'}
+                </div>
+              ))}
+              <div className="text-xs text-slate-500 dark:text-slate-400">
+                失败的盘只影响该盘的列出与分享，不代表文件不存在；请检查对应 CLI 的登录配置。
               </div>
             </div>
           </div>
         </div>
       )}
 
-      <div className="vben-card flex flex-col" style={{ height: 'calc(100vh - 300px)', minHeight: '420px' }}>
+      <div className="vben-card flex flex-col" style={{ height: 'calc(100vh - 320px)', minHeight: '420px' }}>
         <div className="vben-card-header flex-shrink-0 flex-between">
           <h2 className="vben-card-title">
             <Cloud className="w-4 h-4 text-blue-500" />
             网盘内容
+            {okDrives.length > 0 && (
+              <span className="ml-2 text-xs font-normal text-slate-400">
+                已连接：{okDrives.map((d) => panLabel(d.pan_type)).join('、')}
+              </span>
+            )}
           </h2>
           <span className="badge-primary">{sortedEntries.length} 个条目</span>
         </div>
@@ -338,6 +379,7 @@ export function PanBrowser() {
               <thead className="sticky top-0 bg-white dark:bg-slate-800 z-[1]">
                 <tr>
                   <th>名称</th>
+                  <th>所在网盘</th>
                   <th>大小</th>
                   <th>修改时间</th>
                   <th>资料池状态</th>
@@ -357,72 +399,86 @@ export function PanBrowser() {
                     <td>-</td>
                     <td>-</td>
                     <td>-</td>
+                    <td>-</td>
                   </tr>
                 )}
                 {sortedEntries.length === 0 ? (
                   <tr>
-                    <td colSpan={5}>
+                    <td colSpan={6}>
                       <div className="empty-state py-8">
                         <p className="text-slate-500 dark:text-slate-400">此文件夹为空</p>
                       </div>
                     </td>
                   </tr>
                 ) : (
-                  sortedEntries.map((entry) => (
-                    <tr key={entry.fid}>
-                      <td
-                        className={`min-w-[320px] max-w-[480px] ${entry.dir ? 'cursor-pointer' : ''}`}
-                        onClick={() => entry.dir && navigateTo(entry.path)}
-                      >
-                        <div className="flex items-center gap-2">
-                          {entry.dir ? (
-                            <Folder className="w-4 h-4 text-amber-500 flex-shrink-0" />
-                          ) : (
-                            <FileText className="w-4 h-4 text-slate-400 flex-shrink-0" />
-                          )}
-                          <span className="break-all">{entry.file_name}</span>
-                        </div>
-                      </td>
-                      <td className="whitespace-nowrap text-xs">{entry.dir ? '-' : formatFileSize(entry.size)}</td>
-                      <td className="whitespace-nowrap text-xs">{formatDateTime(entry.mtime)}</td>
-                      <td className="whitespace-nowrap">
-                        {entry.pool ? (
-                          <span
-                            className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                              POOL_STATUS_CLASSES[entry.pool.status] || POOL_STATUS_CLASSES.crawled
-                            }`}
-                          >
-                            {POOL_STATUS_LABELS[entry.pool.status] || entry.pool.status}
-                          </span>
-                        ) : (
-                          <span className="text-xs text-slate-400">未导入</span>
-                        )}
-                      </td>
-                      <td className="whitespace-nowrap">
-                        <div className="flex items-center gap-1">
-                          <button
-                            onClick={() => {
-                              setShareEntry(entry)
-                              setShareResult(null)
-                            }}
-                            className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs bg-blue-50 text-blue-600 hover:bg-blue-100 dark:bg-blue-900/30 dark:text-blue-400"
-                          >
-                            <Share2 className="w-3.5 h-3.5" />
-                            分享
-                          </button>
-                          {!entry.pool && (
-                            <button
-                              onClick={() => setImportEntry(entry)}
-                              className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs bg-green-50 text-green-600 hover:bg-green-100 dark:bg-green-900/30 dark:text-green-400"
+                  sortedEntries.map((entry) => {
+                    const pool = entryPool(entry)
+                    const path = entryPath(entry)
+                    return (
+                      <tr key={`${entry.file_name}:${entry.dir}`}>
+                        <td
+                          className={`min-w-[280px] max-w-[420px] ${entry.dir ? 'cursor-pointer' : ''}`}
+                          onClick={() => entry.dir && navigateTo(path)}
+                        >
+                          <div className="flex items-center gap-2">
+                            {entry.dir ? (
+                              <Folder className="w-4 h-4 text-amber-500 flex-shrink-0" />
+                            ) : (
+                              <FileText className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                            )}
+                            <span className="break-all">{entry.file_name}</span>
+                            {entry.size_mismatch && (
+                              <span className="px-1.5 py-0.5 rounded text-[10px] bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-400 whitespace-nowrap">
+                                大小不一致
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="whitespace-nowrap text-xs">
+                          {entry.locations.map((l) => panLabel(l.pan_type)).join('、')}
+                        </td>
+                        <td className="whitespace-nowrap text-xs">{entry.dir ? '-' : formatFileSize(entry.locations[0]?.size)}</td>
+                        <td className="whitespace-nowrap text-xs">{formatDateTime(entry.locations[0]?.mtime)}</td>
+                        <td className="whitespace-nowrap">
+                          {pool ? (
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                                POOL_STATUS_CLASSES[pool.status] || POOL_STATUS_CLASSES.crawled
+                              }`}
                             >
-                              <Rocket className="w-3.5 h-3.5" />
-                              上架
-                            </button>
+                              {POOL_STATUS_LABELS[pool.status] || pool.status}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-slate-400">未导入</span>
                           )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))
+                        </td>
+                        <td className="whitespace-nowrap">
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => {
+                                setShareEntry(entry)
+                                setShareResults(null)
+                              }}
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs bg-blue-50 text-blue-600 hover:bg-blue-100 dark:bg-blue-900/30 dark:text-blue-400"
+                            >
+                              <Share2 className="w-3.5 h-3.5" />
+                              分享
+                            </button>
+                            {/* 文件夹上架在 22 号方案后续再做；文件始终可上架（已导入则补链） */}
+                            {!entry.dir && (
+                              <button
+                                onClick={() => setImportEntry(entry)}
+                                className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs bg-green-50 text-green-600 hover:bg-green-100 dark:bg-green-900/30 dark:text-green-400"
+                              >
+                                <Rocket className="w-3.5 h-3.5" />
+                                {pool ? '补链上架' : '上架'}
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })
                 )}
               </tbody>
             </table>
@@ -430,7 +486,7 @@ export function PanBrowser() {
         </div>
       </div>
 
-      {/* 分享弹窗 */}
+      {/* 分享弹窗（逐盘结果，失败可单侧重试） */}
       <ModalShell
         isOpen={shareEntry !== null}
         title={shareEntry?.dir ? '分享文件夹' : '分享文件'}
@@ -438,50 +494,88 @@ export function PanBrowser() {
       >
         {shareEntry && (
           <div className="space-y-4">
-            <p className="text-sm text-slate-500 dark:text-slate-400 break-all">{shareEntry.path}</p>
-            {shareResult ? (
+            <p className="text-sm text-slate-500 dark:text-slate-400 break-all">{entryPath(shareEntry)}</p>
+            {shareResults ? (
               <div className="space-y-3">
-                <div className="flex items-start gap-2 rounded-lg bg-green-50 dark:bg-green-900/20 p-3">
-                  <CheckCircle2 className="w-4 h-4 text-green-600 mt-0.5 flex-shrink-0" />
-                  <div className="min-w-0">
-                    <a
-                      href={shareResult.share_url || '#'}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-sm text-blue-600 dark:text-blue-400 break-all hover:underline"
-                    >
-                      {shareResult.share_url}
-                    </a>
-                    {shareResult.pan_code && (
-                      <div className="text-xs text-slate-500 mt-1">提取码：{shareResult.pan_code}</div>
-                    )}
-                    <div className="text-xs text-slate-400 mt-1">
-                      有效期至 {shareResult.share_expire_at ? formatDateTime(new Date(shareResult.share_expire_at).getTime() / 1000) : '-'}
-                    </div>
-                  </div>
-                </div>
-                <div className="flex justify-end gap-2">
-                  <button
-                    onClick={() => handleCopy(shareResult.share_url || '')}
-                    className="btn-ios-secondary"
+                {shareResults.map((item) => (
+                  <div
+                    key={item.pan_type}
+                    className={`flex items-start gap-2 rounded-lg p-3 ${
+                      item.ok
+                        ? 'bg-green-50 dark:bg-green-900/20'
+                        : 'bg-red-50 dark:bg-red-900/20'
+                    }`}
                   >
-                    <Copy className="w-4 h-4" />
-                    复制链接
-                  </button>
+                    {item.ok ? (
+                      <CheckCircle2 className="w-4 h-4 text-green-600 mt-0.5 flex-shrink-0" />
+                    ) : (
+                      <AlertTriangle className="w-4 h-4 text-red-600 mt-0.5 flex-shrink-0" />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs font-medium text-slate-600 dark:text-slate-300">{panLabel(item.pan_type)}网盘</div>
+                      {item.ok ? (
+                        <>
+                          <a
+                            href={item.share_url || '#'}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-sm text-blue-600 dark:text-blue-400 break-all hover:underline"
+                          >
+                            {item.share_url}
+                          </a>
+                          {item.pan_code && (
+                            <div className="text-xs text-slate-500 mt-1">提取码：{item.pan_code}</div>
+                          )}
+                          <div className="text-xs text-slate-400 mt-1">
+                            有效期至 {item.share_expire_at ? formatDateTime(new Date(item.share_expire_at).getTime() / 1000) : '-'}
+                          </div>
+                        </>
+                      ) : (
+                        <div className="text-sm text-red-600 dark:text-red-400 break-all">{item.error || '分享失败'}</div>
+                      )}
+                    </div>
+                    {item.ok ? (
+                      <button
+                        onClick={() => handleCopy(item.share_url || '')}
+                        className="btn-ios-secondary flex-shrink-0 !px-2 !py-1 text-xs"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                        复制
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() =>
+                          handleShare(shareEntry.locations.filter((l) => l.pan_type === item.pan_type))
+                        }
+                        disabled={sharing}
+                        className="btn-ios-secondary flex-shrink-0 !px-2 !py-1 text-xs"
+                      >
+                        {sharing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                        重试
+                      </button>
+                    )}
+                  </div>
+                ))}
+                <div className="flex justify-end">
                   <button onClick={() => setShareEntry(null)} className="btn-ios-primary">
                     完成
                   </button>
                 </div>
               </div>
             ) : (
-              <div className="flex justify-end gap-2">
-                <button onClick={() => setShareEntry(null)} className="btn-ios-secondary">
-                  取消
-                </button>
-                <button onClick={handleShare} disabled={sharing} className="btn-ios-primary">
-                  {sharing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Link2 className="w-4 h-4" />}
-                  {sharing ? '创建中...' : '创建分享链接'}
-                </button>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-slate-400">
+                  将对 {shareEntry.locations.map((l) => panLabel(l.pan_type)).join('、')} 分别创建分享
+                </span>
+                <div className="flex gap-2">
+                  <button onClick={() => setShareEntry(null)} className="btn-ios-secondary">
+                    取消
+                  </button>
+                  <button onClick={() => handleShare(shareEntry.locations)} disabled={sharing} className="btn-ios-primary">
+                    {sharing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Link2 className="w-4 h-4" />}
+                    {sharing ? '创建中...' : '创建分享链接'}
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -523,6 +617,8 @@ function ImportModal({
   const [coverImage, setCoverImage] = useState('')
   const [coverPreview, setCoverPreview] = useState('')
   const [uploadingCover, setUploadingCover] = useState(false)
+  // 参与上架的网盘：大小不一致的行默认全不勾选，须人工确认
+  const [checkedPans, setCheckedPans] = useState<string[]>([])
 
   // 每次打开新文件时重置并预填默认值
   useEffect(() => {
@@ -535,10 +631,21 @@ function ImportModal({
       setGrade('')
       setCoverImage('')
       setCoverPreview('')
+      if (entry.size_mismatch && entry.locations.length > 1) {
+        setCheckedPans([])
+      } else {
+        setCheckedPans(entry.locations.map((l) => l.pan_type))
+      }
     }
   }, [entry])
 
   if (!entry) return null
+
+  const togglePan = (panType: string) => {
+    setCheckedPans((prev) =>
+      prev.includes(panType) ? prev.filter((p) => p !== panType) : [...prev, panType]
+    )
+  }
 
   const handleCoverUpload = async (file: File) => {
     setUploadingCover(true)
@@ -563,14 +670,19 @@ function ImportModal({
       addToast({ type: 'error', message: '请上传封面图（上架必填）' })
       return
     }
+    const locations = entry.locations.filter((l) => checkedPans.includes(l.pan_type))
+    if (locations.length === 0) {
+      addToast({ type: 'error', message: '请至少勾选一个网盘' })
+      return
+    }
     setSubmitting(true)
     try {
-      // 1) 导入资料池（幂等：已有记录直接返回）
+      // 1) 导入资料池（幂等：命中已有记录则补链，返回该记录）
       const importRes = await importPanFile({
-        pan_path: entry.path,
         file_name: entry.file_name,
-        file_size: entry.size,
-        fid: entry.fid,
+        file_size: locations[0]?.size ?? undefined,
+        create_share: true,
+        locations: locations.map((l) => ({ pan_type: l.pan_type, path: l.path, fid: l.fid, size: l.size })),
       })
       if (!importRes.success || !importRes.data) {
         addToast({ type: 'error', message: importRes.message || '导入资料池失败' })
@@ -596,7 +708,7 @@ function ImportModal({
 
       addToast({
         type: 'success',
-        message: existed ? '该文件已在资料池中，已更新补充信息' : '已导入资料池（待审核），请前往资料池审核上架',
+        message: existed ? '该文件已在资料池中，已补齐网盘链接并更新补充信息' : '已导入资料池（待审核），请前往资料池审核上架',
       })
       onDone()
     } catch (error) {
@@ -611,8 +723,40 @@ function ImportModal({
       <div className="space-y-4">
         <div className="rounded-lg bg-slate-50 dark:bg-slate-900/40 p-3 text-sm">
           <div className="font-medium break-all">{entry.file_name}</div>
-          <div className="text-xs text-slate-500 mt-1 break-all">{entry.path}</div>
-          <div className="text-xs text-slate-400 mt-0.5">{entry.dir ? '文件夹（分享整个目录）' : formatFileSize(entry.size)}</div>
+          <div className="text-xs text-slate-500 mt-1 break-all">{entryPath(entry)}</div>
+          <div className="text-xs text-slate-400 mt-0.5">{formatFileSize(entry.locations[0]?.size)}</div>
+        </div>
+
+        {/* 网盘勾选：发货卡券将包含所有勾选盘的链接 */}
+        <div className="input-group">
+          <label className="input-label">发货网盘（卡券将包含所有勾选盘的链接）</label>
+          {entry.size_mismatch && entry.locations.length > 1 && (
+            <div className="mb-2 flex items-start gap-1.5 text-xs text-red-600 dark:text-red-400">
+              <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+              该文件在各盘大小不一致，可能不是同一份内容，默认不勾选，请确认后手动勾选要发货的网盘。
+            </div>
+          )}
+          <div className="flex flex-wrap gap-2">
+            {entry.locations.map((loc) => (
+              <label
+                key={loc.pan_type}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs cursor-pointer border ${
+                  checkedPans.includes(loc.pan_type)
+                    ? 'border-blue-300 bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-800'
+                    : 'border-slate-200 text-slate-500 dark:border-slate-600 dark:text-slate-400'
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  className="hidden"
+                  checked={checkedPans.includes(loc.pan_type)}
+                  onChange={() => togglePan(loc.pan_type)}
+                />
+                {panLabel(loc.pan_type)}网盘
+                <span className="text-[10px] opacity-70">{formatFileSize(loc.size)}</span>
+              </label>
+            ))}
+          </div>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

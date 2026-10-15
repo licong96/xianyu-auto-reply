@@ -56,6 +56,12 @@ import type { AccountDetail } from '@/types'
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100]
 
+// 多网盘显示名（与子表 pan_type 对应）
+const PAN_LABELS: Record<string, string> = {
+  quark: '夸克',
+  baidu: '百度',
+}
+
 const STATUS_LABELS: Record<string, string> = {
   crawled: '已采集',
   uploaded: '已传网盘',
@@ -552,7 +558,30 @@ export function MaterialPool() {
                         {row.local_path ? formatFileSize(row.file_size) : <span className="text-slate-400">无文件</span>}
                       </td>
                       <td className="align-top min-w-[180px] max-w-[220px]">
-                        {row.pan_url ? (
+                        {row.pan_links && row.pan_links.length > 0 ? (
+                          <div className="space-y-1.5">
+                            {row.pan_links.filter((l) => l.pan_url).map((l) => (
+                              <div key={l.pan_type} className="min-w-0">
+                                <div className="flex items-center gap-1">
+                                  <span className="flex-shrink-0 px-1 rounded text-[10px] bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300">
+                                    {PAN_LABELS[l.pan_type] || l.pan_type}
+                                  </span>
+                                  <button
+                                    onClick={() => handleCopy(l.pan_code ? `${l.pan_url} 提取码：${l.pan_code}` : l.pan_url!)}
+                                    className="p-0.5 text-slate-400 hover:text-blue-500 flex-shrink-0"
+                                    title="复制链接"
+                                  >
+                                    <Copy className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                                <a href={l.pan_url!} target="_blank" rel="noreferrer" className="text-blue-600 dark:text-blue-400 break-all hover:underline text-xs">
+                                  {l.pan_url}
+                                </a>
+                                {l.pan_code && <div className="text-xs text-slate-400 mt-0.5">提取码：{l.pan_code}</div>}
+                              </div>
+                            ))}
+                          </div>
+                        ) : row.pan_url ? (
                           <div className="flex items-start gap-1">
                             <a href={row.pan_url} target="_blank" rel="noreferrer" className="text-blue-600 dark:text-blue-400 break-all hover:underline text-xs">
                               {row.pan_url}

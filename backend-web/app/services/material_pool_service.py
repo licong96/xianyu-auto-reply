@@ -33,6 +33,8 @@ from common.models.material_pool import (
     STATUS_PENDING,
     STATUS_REJECTED,
 )
+# CUSTOM: 多网盘并列查询与合并列表方案
+from common.models.material_pool_link import MaterialPoolPanLink
 from common.models.user import User, UserRole
 from common.models.xy_catalog_item import XYCatalogItem
 
@@ -83,7 +85,7 @@ def _is_admin(user: User) -> bool:
     return user.role == UserRole.ADMIN
 
 
-def _row_to_dict(row: MaterialPool) -> Dict[str, Any]:
+def _row_to_dict(row: MaterialPool, pan_links: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     return {
         "id": row.id,
         "paper_name": row.paper_name,
@@ -100,6 +102,8 @@ def _row_to_dict(row: MaterialPool) -> Dict[str, Any]:
         "file_size": row.file_size,
         "pan_url": row.pan_url,
         "pan_code": row.pan_code,
+        # 多网盘子表链接（可为空列表；空时前端回退 pan_url 单链接展示）
+        "pan_links": pan_links or [],
         "share_expire_at": row.share_expire_at.isoformat() if row.share_expire_at else None,
         "title": row.title,
         "description": row.description,
@@ -133,6 +137,27 @@ class MaterialPoolService:
 
     def _scope_cond(self, user: User):
         return [] if _is_admin(user) else [MaterialPool.owner_id == user.id]
+
+    async def _pan_links_map(self, pool_ids: List[int]) -> Dict[int, List[Dict[str, Any]]]:
+        """批量取一批资料池记录的多网盘链接子表，按 pool_id 分组（无则为空列表）。"""
+        result: Dict[int, List[Dict[str, Any]]] = {pid: [] for pid in pool_ids}
+        if not pool_ids:
+            return result
+        stmt = (
+            select(MaterialPoolPanLink)
+            .where(MaterialPoolPanLink.pool_id.in_(pool_ids))
+            .order_by(MaterialPoolPanLink.id)
+        )
+        for link in (await self.session.execute(stmt)).scalars().all():
+            result.setdefault(link.pool_id, []).append({
+                "pan_type": link.pan_type,
+                "pan_path": link.pan_path,
+                "pan_url": link.pan_url,
+                "pan_code": link.pan_code,
+                "share_id": link.share_id,
+                "share_expire_at": link.share_expire_at.isoformat() if link.share_expire_at else None,
+            })
+        return result
 
     async def list_pools(
         self,
@@ -180,8 +205,9 @@ class MaterialPoolService:
             .limit(page_size)
         )
         rows = (await self.session.execute(stmt)).scalars().all()
+        links_map = await self._pan_links_map([r.id for r in rows])
         return {
-            "list": [_row_to_dict(r) for r in rows],
+            "list": [_row_to_dict(r, links_map.get(r.id)) for r in rows],
             "total": total,
             "page": page,
             "page_size": page_size,
@@ -198,7 +224,9 @@ class MaterialPoolService:
         return row
 
     async def get_pool(self, user: User, pool_id: int) -> Dict[str, Any]:
-        return _row_to_dict(await self._get_row(user, pool_id))
+        row = await self._get_row(user, pool_id)
+        links_map = await self._pan_links_map([row.id])
+        return _row_to_dict(row, links_map.get(row.id))
 
     async def update_pool(self, user: User, pool_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
         row = await self._get_row(user, pool_id)
@@ -334,7 +362,27 @@ class MaterialPoolService:
         lines.append("付款后自动发送网盘下载链接，请尽快保存。")
         return "\n".join(lines)[:1500]
 
-    def _build_card_text(self, row: MaterialPool) -> str:
+    async def _build_card_text(self, row: MaterialPool) -> str:
+        """发货卡券正文。子表有链接记录按盘逐条输出；子表为空回退主记录旧单盘字段（老商品字节级不变）。"""
+        from app.services.pan.base import pan_display_name
+
+        stmt = (
+            select(MaterialPoolPanLink)
+            .where(MaterialPoolPanLink.pool_id == row.id, MaterialPoolPanLink.pan_url.isnot(None))
+            .order_by(MaterialPoolPanLink.id)
+        )
+        links = (await self.session.execute(stmt)).scalars().all()
+        if links:
+            lines: List[str] = []
+            for link in links:
+                lines.append(f"{pan_display_name(link.pan_type)}：{link.pan_url}")
+                if link.pan_code:
+                    lines.append(f"提取码：{link.pan_code}")
+            lines.append("")
+            lines.append(f"资料：{row.paper_name or ''}")
+            lines.append("链接失效请联系客服补发。")
+            return "\n".join(lines)
+        # 旧单盘记录（未迁子表）：保持原格式
         lines = [f"网盘链接：{row.pan_url}"]
         if row.pan_code:
             lines.append(f"提取码：{row.pan_code}")

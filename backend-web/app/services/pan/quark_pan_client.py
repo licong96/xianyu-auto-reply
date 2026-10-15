@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from loguru import logger
@@ -33,6 +33,8 @@ class PanError(RuntimeError):
 
 class QuarkPanClient:
     """kuake_cli 封装。所有 remote 路径以 / 开头。"""
+
+    PAN_TYPE = "quark"
 
     def __init__(self, bin_path: str | None = None, workdir: str | None = None, timeout: int = 600):
         self.bin = bin_path or os.environ.get("KUAKE_BIN") or DEFAULT_BIN
@@ -117,6 +119,62 @@ class QuarkPanClient:
     def user_info(self) -> dict:
         return self._run("user")
 
+    # ---------- PanClient 协议方法（多网盘并列查询与合并列表方案） ----------
+
+    def status_check(self) -> None:
+        """连接状态：失败抛 PanError（登录失效/二进制不可用/CLI 报错）。"""
+        self.user_info()
+
+    def list_entries(self, remote: str = "/") -> list[dict]:
+        """列出当前目录，返回统一形状条目（name/path/is_dir/fid/size/mtime）。"""
+        data = self.list_dir(remote)
+        result = []
+        for e in (data.get("data") or {}).get("list") or []:
+            result.append({
+                "name": e.get("file_name") or "",
+                "path": e.get("path") or "",
+                "is_dir": bool(e.get("dir")),
+                "fid": str(e.get("fid")) if e.get("fid") is not None else None,
+                "size": e.get("size"),
+                "mtime": e.get("mtime"),
+            })
+        return result
+
+    def create_share(self, remote_path: str, days: int = 30, passcode: bool = False) -> dict:
+        """创建分享，返回统一形状（share_url/pan_code/share_id/share_expire_at）。"""
+        data = self.share(remote_path, days=days, passcode=passcode)
+        url, code, sid = _extract_share_url(data)
+        if not url:
+            raise PanError(f"分享成功但未解析到链接，原始返回：{json.dumps(data, ensure_ascii=False)[:500]}")
+        if not sid:
+            sid = _lookup_share_id(self, url)
+        return {
+            "share_url": url,
+            "pan_code": code,
+            "share_id": sid,
+            "share_expire_at": datetime.now() + timedelta(days=days),
+        }
+
+    def find_share(self, fid: str | None = None, path: str | None = None) -> dict | None:
+        """share-list 按 first_fid 反查已有分享（查重）。查不到返回 None。"""
+        if not fid:
+            return None
+        try:
+            shares = self.share_list()
+        except PanError as e:
+            logger.warning(f"[pan] share-list 查重失败：{e}")
+            return None
+        for item in (shares.get("data") or {}).get("list") or []:
+            if str(item.get("first_fid") or "") == str(fid):
+                expired_at = item.get("expired_at")
+                return {
+                    "share_url": item.get("share_url"),
+                    "pan_code": item.get("pwd_id") or None,
+                    "share_id": str(item.get("share_id") or "") or None,
+                    "share_expire_at": datetime.fromtimestamp(expired_at / 1000) if expired_at else None,
+                }
+        return None
+
 
 # ---------- 资料池行上传 ----------
 
@@ -193,6 +251,21 @@ async def upload_pool_row_to_pan(row_id: int, client: QuarkPanClient | None = No
         row.share_expire_at = datetime.now() + timedelta(days=share_days)
         row.status = STATUS_PENDING
         row.error_message = None
+
+        # 多网盘子表：新上传记录同步落一条夸克链接（卡券遍历子表输出）
+        from common.models.material_pool_link import MaterialPoolPanLink
+        s.add(MaterialPoolPanLink(
+            pool_id=row.id,
+            pan_type="quark",
+            pan_path=remote_path,
+            fid=None,
+            file_size=local.stat().st_size,
+            pan_url=url,
+            pan_code=code,
+            share_id=sid,
+            share_expire_at=row.share_expire_at,
+        ))
+
         await s.commit()
         logger.info(f"[pan] 分享已创建并回写：id={row_id} -> {url}")
         return {"id": row_id, "pan_url": url, "pan_code": code, "share_id": sid}
