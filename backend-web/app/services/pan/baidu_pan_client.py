@@ -25,7 +25,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from app.services.pan.quark_pan_client import PanError
+from app.services.pan.quark_pan_client import PanError, PanPathNotFoundError
 
 _SIZE_UNITS = {"B": 1, "KB": 1024, "MB": 1024**2, "GB": 1024**3, "TB": 1024**4}
 
@@ -83,6 +83,10 @@ class BaiduPanClient:
         err = (proc.stderr or "").strip()
         # BaiduPCS-Go 失败时仍可能返回 0，错误信息混在 stdout/stderr
         combined = out + "\n" + err
+        # 代码 -9 = 文件不存在：多网盘允许文件只存在一个盘，另一盘路径不存在
+        # 不是错误（分享/列目录遇到都按「该盘无此项」处理）
+        if re.search(r"代码:\s*-9\b", combined) or "消息: 文件不存在" in combined:
+            raise PanPathNotFoundError(f"BaiduPCS-Go 路径不存在：{combined.strip()[:300]}")
         if "遇到错误" in combined or "请尝试重新登录" in combined or "user not exists" in combined:
             raise PanError(f"BaiduPCS-Go 失败：{combined.strip()[:300]}")
         if not out:

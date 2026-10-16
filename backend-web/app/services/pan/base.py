@@ -4,6 +4,7 @@
 每种网盘一个客户端，对外四件事（同步阻塞，调用方用 asyncio.to_thread 包裹）：
 1. status_check()  连接状态（登录失效/二进制不可用时抛 PanError）
 2. list_entries(remote)  列出当前目录，返回统一形状的条目列表
+   （远端路径在该盘不存在时抛 PanPathNotFoundError，调用方按「该层为空」处理，不报错）
 3. create_share(remote_path, days, passcode)  创建分享，返回统一形状的分享结果
 4. find_share(fid, path)  按文件反查已有分享（查重，防重复创建）
 
@@ -23,7 +24,11 @@ import unicodedata
 from typing import Any, Callable, Dict, List, Optional, Protocol, runtime_checkable
 
 from app.services.pan.baidu_pan_client import BaiduPanClient
-from app.services.pan.quark_pan_client import PanError, QuarkPanClient  # noqa: F401  (re-export)
+from app.services.pan.quark_pan_client import (  # noqa: F401  (re-export)
+    PanError,
+    PanPathNotFoundError,
+    QuarkPanClient,
+)
 
 # 统一条目形状
 # {"name": str, "path": str, "is_dir": bool, "fid": str|None, "size": int|None, "mtime": int|None}
@@ -45,7 +50,11 @@ class PanClient(Protocol):
         ...
 
     def list_entries(self, remote: str = "/") -> List[PanEntryDict]:
-        """列出当前目录（单层），返回统一形状的条目列表。"""
+        """列出当前目录（单层），返回统一形状的条目列表。
+
+        远端路径在该盘不存在时抛 PanPathNotFoundError（文件可只存在于一个网盘，
+        另一盘查不到属正常，由调用方按空列表处理）。
+        """
         ...
 
     def create_share(self, remote_path: str, days: int = 30, passcode: bool = False) -> PanShareDict:

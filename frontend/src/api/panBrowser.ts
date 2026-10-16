@@ -40,6 +40,8 @@ export interface PanDriveStatus {
   pan_type: string
   ok: boolean
   error?: string
+  /** true=该盘当前目录不存在（按空目录处理，不算失败，不展示报错） */
+  missing?: boolean
 }
 
 /** 单盘分享结果 */

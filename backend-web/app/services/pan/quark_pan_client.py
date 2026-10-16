@@ -31,6 +31,14 @@ class PanError(RuntimeError):
     """网盘操作失败（CLI 返回 success=false、输出非 JSON、超时等）。"""
 
 
+class PanPathNotFoundError(PanError):
+    """远端路径在该网盘上不存在。
+
+    这不是错误：多网盘方案允许文件只存在于其中一个网盘，
+    另一个网盘查不到该目录时应视为「该层为空」，由调用方静默处理。
+    """
+
+
 class QuarkPanClient:
     """kuake_cli 封装。所有 remote 路径以 / 开头。"""
 
@@ -71,7 +79,11 @@ class QuarkPanClient:
         except json.JSONDecodeError as e:
             raise PanError(f"kuake 输出非 JSON：{out[:300]}") from e
         if not data.get("success"):
-            raise PanError(f"kuake 失败：{data.get('message') or data.get('code') or out[:300]}")
+            message = data.get("message") or data.get("code") or out[:300]
+            # 路径不存在 ≠ 失败：多网盘允许文件只存在一个盘，另一盘应为空列表
+            if data.get("code") == "FILE_NOT_FOUND":
+                raise PanPathNotFoundError(f"kuake 路径不存在：{message}")
+            raise PanError(f"kuake 失败：{message}")
         return data
 
     # ---------- 目录 ----------

@@ -9,7 +9,8 @@
 
 设计要点：
 - 网盘客户端走 app.services.pan.base 的 PanClient 协议与注册表，启用的盘由 PAN_ENABLED_PANS 决定
-- 某一盘整层查询失败只标 drives，不当作「没有文件」；全部失败才返回错误
+- 某一盘整层查询失败只标 drives，不当作「没有文件」
+- 路径在某盘不存在（PanPathNotFoundError）按「该层为空」处理、不标失败：文件允许只存在于一个网盘
 - 合并只发生在当前这一层；同名文件大小不同标 size_mismatch（前端默认不勾选双盘）
 - 主记录旧 pan_* 字段过渡期仍代表单盘链接；子表为空时卡券回退旧字段
 
@@ -35,6 +36,7 @@ from app.api.deps import get_current_active_user, get_db_session
 from app.services.material_pool_service import _row_to_dict
 from app.services.pan.base import (
     PanError,
+    PanPathNotFoundError,
     enabled_pan_types,
     make_client,
     merge_pan_entries,
@@ -185,13 +187,22 @@ async def pan_entries(
         try:
             client = make_client(pan_type)
             entries = await asyncio.to_thread(client.list_entries, path)
-            return {"pan_type": pan_type, "ok": True, "entries": entries, "error": None}
+            return {"pan_type": pan_type, "ok": True, "entries": entries, "error": None, "missing": False}
+        except PanPathNotFoundError:
+            # 路径在该盘不存在 ≠ 失败：文件可只存在于一个网盘，该层按空列表处理
+            logger.info(f"[pan] {pan_type} 路径不存在（按空目录处理）：{path}")
+            return {"pan_type": pan_type, "ok": True, "entries": [], "error": None, "missing": True}
         except Exception as exc:  # noqa: BLE001
-            return {"pan_type": pan_type, "ok": False, "entries": [], "error": str(exc)}
+            return {"pan_type": pan_type, "ok": False, "entries": [], "error": str(exc), "missing": False}
 
     results = await asyncio.gather(*[_list(p) for p in enabled_pan_types()])
     drives = [
-        {"pan_type": r["pan_type"], "ok": r["ok"], **({"error": r["error"]} if r["error"] else {})}
+        {
+            "pan_type": r["pan_type"],
+            "ok": r["ok"],
+            **({"missing": True} if r["missing"] else {}),
+            **({"error": r["error"]} if r["error"] else {}),
+        }
         for r in results
     ]
     if not any(r["ok"] for r in results):
