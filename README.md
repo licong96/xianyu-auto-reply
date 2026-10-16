@@ -343,6 +343,15 @@ npm install
 npm run dev
 ```
 
+#### 6. 运行单元测试（可选）
+
+```bash
+# 网盘客户端与路由的单测（多网盘并列查询、路径不存在语义等）
+cd backend-web
+.venv/bin/python -m pytest tests
+# Windows: .venv\Scripts\python -m pytest tests
+```
+
 ## 配置说明
 
 ### 关键环境变量

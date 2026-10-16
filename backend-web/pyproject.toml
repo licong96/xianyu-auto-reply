@@ -48,3 +48,7 @@ build-backend = "setuptools.build_meta"
 where = ["."]
 include = ["app*"]
 exclude = ["logs*", "static*", "__pycache__*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
