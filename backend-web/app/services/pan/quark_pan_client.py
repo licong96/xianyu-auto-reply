@@ -167,9 +167,11 @@ class QuarkPanClient:
         for item in (shares.get("data") or {}).get("list") or []:
             if str(item.get("first_fid") or "") == str(fid):
                 expired_at = item.get("expired_at")
+                # 夸克分享的 pwd_id 就是链接后缀（https://pan.quark.cn/s/<pwd_id>），
+                # 并非独立提取密码，展示层不再输出，避免和链接重复
                 return {
                     "share_url": item.get("share_url"),
-                    "pan_code": item.get("pwd_id") or None,
+                    "pan_code": None,
                     "share_id": str(item.get("share_id") or "") or None,
                     "share_expire_at": datetime.fromtimestamp(expired_at / 1000) if expired_at else None,
                 }

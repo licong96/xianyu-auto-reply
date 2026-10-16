@@ -379,7 +379,9 @@ class MaterialPoolService:
         links = (await self.session.execute(stmt)).scalars().all()
         if links:
             lines: List[str] = []
-            for link in links:
+            for i, link in enumerate(links):
+                if i > 0:
+                    lines.append("")  # 多个网盘链接之间空一行，便于买家阅读
                 lines.append(f"{pan_display_name(link.pan_type)}：{link.pan_url}")
                 if link.pan_code:
                     lines.append(f"提取码：{link.pan_code}")
@@ -519,7 +521,7 @@ class MaterialPoolService:
             # commit 会导致 ORM 属性过期，先把后续要用的值全部取到局部变量
             title = opt_title or self._build_goods_title(row)
             description = opt_description or self._build_goods_description(row)
-            card_text = self._build_card_text(row)
+            card_text = await self._build_card_text(row)
             price = float(row.price)
             cover_image = row.cover_image
             material_id = row.material_id

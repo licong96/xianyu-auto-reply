@@ -5,7 +5,7 @@
  * 1. 面包屑 + 单层表格逐层下钻浏览多网盘（当前层实时并列查询、按文件名合并）
  * 2. 顶部逐盘连接状态：某盘登录失效单独标出，不当作「没有文件」
  * 3. 文件名相同收成一行，行内标出实际在哪些盘；大小不一致标红、默认不双盘发货
- * 4. 分享/上架只处理该行实际存在的盘，多盘链接写入同一张卡券
+ * 4. 分享/入池只处理该行实际存在的盘，多盘链接写入同一张卡券
  * 5. 「资料池状态」列标记已导入文件；已导入的再上架会给已有记录补链
  *
  * 路径状态写进 URL（?path=），刷新不丢位置。
@@ -21,7 +21,6 @@ import {
   Copy,
   FileText,
   Folder,
-  ImagePlus,
   Link2,
   Loader2,
   RefreshCw,
@@ -40,7 +39,6 @@ import {
   type PanLocation,
   type PanShareItem,
 } from '@/api/panBrowser'
-import { updateMaterialPool, uploadMaterialPoolCover } from '@/api/materialPool'
 import { PageLoading } from '@/components/common/Loading'
 import { useUIStore } from '@/store/uiStore'
 import { getApiErrorMessage } from '@/utils/request'
@@ -308,7 +306,7 @@ export function PanBrowser() {
       <div className="page-header flex-between">
         <div>
           <h1 className="page-title">网盘管理</h1>
-          <p className="page-description">浏览多网盘（同层并列合并），分享链接，或把文件/文件夹补充信息后直选上架到资料池</p>
+          <p className="page-description">浏览多网盘（同层并列合并），创建分享链接，或把文件/文件夹一键入池（自动创建分享链接），上架信息统一在资料池维护</p>
         </div>
         <button onClick={() => loadEntries(currentPath)} className="btn-ios-secondary" disabled={loading}>
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
@@ -464,13 +462,13 @@ export function PanBrowser() {
                               <Share2 className="w-3.5 h-3.5" />
                               分享
                             </button>
-                            {/* 文件与文件夹均可上架：文件夹分享/发货的是整个文件夹链接 */}
+                            {/* 文件与文件夹均可入池：入池即创建分享链接，上架信息在资料池维护 */}
                             <button
                               onClick={() => setImportEntry(entry)}
                               className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs bg-green-50 text-green-600 hover:bg-green-100 dark:bg-green-900/30 dark:text-green-400"
                             >
                               <Rocket className="w-3.5 h-3.5" />
-                              {pool ? '补链上架' : '上架'}
+                              {pool ? '补链入池' : '入池'}
                             </button>
                           </div>
                         </td>
@@ -580,7 +578,7 @@ export function PanBrowser() {
         )}
       </ModalShell>
 
-      {/* 上架弹窗（导入资料池） */}
+      {/* 入池弹窗（创建分享链接并导入资料池） */}
       <ImportModal
         entry={importEntry}
         onClose={() => setImportEntry(null)}
@@ -607,15 +605,7 @@ function ImportModal({
   const { addToast } = useUIStore()
   const [submitting, setSubmitting] = useState(false)
   const [title, setTitle] = useState('')
-  const [price, setPrice] = useState('')
-  const [description, setDescription] = useState('')
-  const [school, setSchool] = useState('')
-  const [year, setYear] = useState('')
-  const [grade, setGrade] = useState('')
-  const [coverImage, setCoverImage] = useState('')
-  const [coverPreview, setCoverPreview] = useState('')
-  const [uploadingCover, setUploadingCover] = useState(false)
-  // 参与上架的网盘：大小不一致的行默认全不勾选，须人工确认
+  // 参与入池的网盘：大小不一致的行默认全不勾选，须人工确认
   const [checkedPans, setCheckedPans] = useState<string[]>([])
 
   // 每次打开新文件/文件夹时重置并预填默认值
@@ -623,13 +613,6 @@ function ImportModal({
     if (entry) {
       // 文件夹标题直接用目录名（去扩展名规则会把「2026.9 月试卷」截成「2026」，不适用）
       setTitle(entry.dir ? entry.file_name.slice(0, 30) : defaultTitleFromFileName(entry.file_name))
-      setPrice('')
-      setDescription('')
-      setSchool('')
-      setYear('')
-      setGrade('')
-      setCoverImage('')
-      setCoverPreview('')
       if (entry.size_mismatch && entry.locations.length > 1) {
         setCheckedPans([])
       } else {
@@ -646,29 +629,7 @@ function ImportModal({
     )
   }
 
-  const handleCoverUpload = async (file: File) => {
-    setUploadingCover(true)
-    try {
-      const { path, url } = await uploadMaterialPoolCover(file)
-      setCoverImage(path)
-      setCoverPreview(url)
-    } catch (error) {
-      addToast({ type: 'error', message: getApiErrorMessage(error, '封面上传失败') })
-    } finally {
-      setUploadingCover(false)
-    }
-  }
-
   const handleSubmit = async () => {
-    const priceNum = Number(price)
-    if (!price || Number.isNaN(priceNum) || priceNum <= 0) {
-      addToast({ type: 'error', message: '请填写售价（大于 0）' })
-      return
-    }
-    if (!coverImage) {
-      addToast({ type: 'error', message: '请上传封面图（上架必填）' })
-      return
-    }
     const locations = entry.locations.filter((l) => checkedPans.includes(l.pan_type))
     if (locations.length === 0) {
       addToast({ type: 'error', message: '请至少勾选一个网盘' })
@@ -676,9 +637,9 @@ function ImportModal({
     }
     setSubmitting(true)
     try {
-      // 1) 导入资料池（幂等：命中已有记录则补链，返回该记录）
+      // 入池即创建分享链接（幂等：命中已有记录则补链，返回该记录）
       const importRes = await importPanFile({
-        file_name: entry.file_name,
+        file_name: title.trim() || entry.file_name,
         file_size: entry.dir ? undefined : locations[0]?.size ?? undefined,
         is_dir: entry.dir,
         create_share: true,
@@ -688,27 +649,13 @@ function ImportModal({
         addToast({ type: 'error', message: importRes.message || '导入资料池失败' })
         return
       }
-      const poolId = importRes.data.id
       const existed = importRes.message === '该文件已在资料池中'
-
-      // 2) 补充商品信息（复用资料池编辑接口）
-      const updateRes = await updateMaterialPool(poolId, {
-        title: title.trim() || undefined,
-        price: priceNum,
-        description: description.trim() || undefined,
-        school: school.trim() || undefined,
-        year: year.trim() || undefined,
-        grade: grade.trim() || undefined,
-        cover_image: coverImage,
-      })
-      if (!updateRes.success) {
-        addToast({ type: 'error', message: updateRes.message || '补充信息保存失败' })
-        return
-      }
 
       addToast({
         type: 'success',
-        message: existed ? '该文件已在资料池中，已补齐网盘链接并更新补充信息' : '已导入资料池（待审核），请前往资料池审核上架',
+        message: existed
+          ? '该文件已在资料池中，已补齐网盘链接'
+          : '已导入资料池（待审核），售价/封面等上架信息请前往资料池编辑',
       })
       onDone()
     } catch (error) {
@@ -719,7 +666,7 @@ function ImportModal({
   }
 
   return (
-    <ModalShell isOpen title={entry.dir ? '补充信息并上架文件夹' : '补充信息并上架'} onClose={onClose} width="max-w-xl">
+    <ModalShell isOpen title={entry.dir ? '导入资料池（整个文件夹）' : '导入资料池'} onClose={onClose} width="max-w-lg">
       <div className="space-y-4">
         <div className="rounded-lg bg-slate-50 dark:bg-slate-900/40 p-3 text-sm">
           <div className="flex items-center gap-2">
@@ -732,17 +679,19 @@ function ImportModal({
           </div>
           <div className="text-xs text-slate-500 mt-1 break-all">{entryPath(entry)}</div>
           <div className="text-xs text-slate-400 mt-0.5">
-            {entry.dir ? '分享与发货的都是这个文件夹的链接，买家可看到文件夹内全部内容' : formatFileSize(entry.locations[0]?.size)}
+            {entry.dir
+              ? '入池后将创建整个文件夹的分享链接，买家可看到文件夹内全部内容'
+              : formatFileSize(entry.locations[0]?.size)}
           </div>
         </div>
 
-        {/* 网盘勾选：发货卡券将包含所有勾选盘的链接 */}
+        {/* 网盘勾选：入池后卡券将包含所有勾选盘的链接 */}
         <div className="input-group">
           <label className="input-label">发货网盘（卡券将包含所有勾选盘的链接）</label>
           {entry.size_mismatch && entry.locations.length > 1 && (
             <div className="mb-2 flex items-start gap-1.5 text-xs text-red-600 dark:text-red-400">
               <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
-              该文件在各盘大小不一致，可能不是同一份内容，默认不勾选，请确认后手动勾选要发货的网盘。
+              该文件在各盘大小不一致，可能不是同一份内容，默认不勾选，请确认后手动勾选。
             </div>
           )}
           <div className="flex flex-wrap gap-2">
@@ -768,68 +717,13 @@ function ImportModal({
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div className="input-group sm:col-span-2">
-            <label className="input-label">商品标题（留空则上架时按文件名自动生成）</label>
-            <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} className="input-ios" placeholder="留空自动生成" />
-          </div>
-          <div className="input-group">
-            <label className="input-label">售价（元，必填）</label>
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              value={price}
-              onChange={(e) => setPrice(e.target.value)}
-              className="input-ios"
-              placeholder="如：9.90"
-            />
-          </div>
-          <div className="input-group">
-            <label className="input-label">年份</label>
-            <input type="text" value={year} onChange={(e) => setYear(e.target.value)} className="input-ios" placeholder="如：2026" />
-          </div>
-          <div className="input-group">
-            <label className="input-label">学校</label>
-            <input type="text" value={school} onChange={(e) => setSchool(e.target.value)} className="input-ios" placeholder="如：学军中学" />
-          </div>
-          <div className="input-group">
-            <label className="input-label">年级</label>
-            <input type="text" value={grade} onChange={(e) => setGrade(e.target.value)} className="input-ios" placeholder="如：高三" />
-          </div>
-          <div className="input-group sm:col-span-2">
-            <label className="input-label">商品描述（可选）</label>
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              rows={3}
-              className="input-ios"
-              placeholder="留空上架时自动生成"
-            />
-          </div>
-          <div className="input-group sm:col-span-2">
-            <label className="input-label">封面图（必填）</label>
-            <div className="flex items-center gap-3">
-              <label className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300 cursor-pointer">
-                {uploadingCover ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ImagePlus className="w-3.5 h-3.5" />}
-                {uploadingCover ? '上传中...' : '上传封面'}
-                <input
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  disabled={uploadingCover}
-                  onChange={(e) => {
-                    const file = e.target.files?.[0]
-                    if (file) handleCoverUpload(file)
-                    e.target.value = ''
-                  }}
-                />
-              </label>
-              {coverPreview && (
-                <img src={coverPreview} alt="封面预览" className="h-12 w-12 rounded-lg object-cover border border-slate-200 dark:border-slate-600" />
-              )}
-            </div>
-          </div>
+        <div className="input-group">
+          <label className="input-label">资料池标题（留空则用文件名）</label>
+          <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} className="input-ios" placeholder="留空用文件名" />
+        </div>
+
+        <div className="rounded-lg bg-blue-50 dark:bg-blue-900/20 p-3 text-xs text-blue-600 dark:text-blue-300">
+          导入后状态为「待审核」，售价、封面、描述等上架信息请在资料池中编辑，审核后一键上架。
         </div>
 
         <div className="flex justify-end gap-2 pt-2">

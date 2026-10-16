@@ -28,7 +28,7 @@ export function Toast() {
   const { toasts, removeToast } = useUIStore()
 
   return (
-    <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[100] flex flex-col items-center gap-3">
+    <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[999] flex flex-col items-center gap-3">
       <AnimatePresence>
         {toasts.map((toast) => {
           const Icon = icons[toast.type]
