@@ -308,7 +308,7 @@ export function PanBrowser() {
       <div className="page-header flex-between">
         <div>
           <h1 className="page-title">网盘管理</h1>
-          <p className="page-description">浏览多网盘（同层并列合并），分享链接，或把文件补充信息后直选上架到资料池</p>
+          <p className="page-description">浏览多网盘（同层并列合并），分享链接，或把文件/文件夹补充信息后直选上架到资料池</p>
         </div>
         <button onClick={() => loadEntries(currentPath)} className="btn-ios-secondary" disabled={loading}>
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
@@ -464,16 +464,14 @@ export function PanBrowser() {
                               <Share2 className="w-3.5 h-3.5" />
                               分享
                             </button>
-                            {/* 文件夹上架在 22 号方案后续再做；文件始终可上架（已导入则补链） */}
-                            {!entry.dir && (
-                              <button
-                                onClick={() => setImportEntry(entry)}
-                                className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs bg-green-50 text-green-600 hover:bg-green-100 dark:bg-green-900/30 dark:text-green-400"
-                              >
-                                <Rocket className="w-3.5 h-3.5" />
-                                {pool ? '补链上架' : '上架'}
-                              </button>
-                            )}
+                            {/* 文件与文件夹均可上架：文件夹分享/发货的是整个文件夹链接 */}
+                            <button
+                              onClick={() => setImportEntry(entry)}
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs bg-green-50 text-green-600 hover:bg-green-100 dark:bg-green-900/30 dark:text-green-400"
+                            >
+                              <Rocket className="w-3.5 h-3.5" />
+                              {pool ? '补链上架' : '上架'}
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -620,10 +618,11 @@ function ImportModal({
   // 参与上架的网盘：大小不一致的行默认全不勾选，须人工确认
   const [checkedPans, setCheckedPans] = useState<string[]>([])
 
-  // 每次打开新文件时重置并预填默认值
+  // 每次打开新文件/文件夹时重置并预填默认值
   useEffect(() => {
     if (entry) {
-      setTitle(defaultTitleFromFileName(entry.file_name))
+      // 文件夹标题直接用目录名（去扩展名规则会把「2026.9 月试卷」截成「2026」，不适用）
+      setTitle(entry.dir ? entry.file_name.slice(0, 30) : defaultTitleFromFileName(entry.file_name))
       setPrice('')
       setDescription('')
       setSchool('')
@@ -680,7 +679,8 @@ function ImportModal({
       // 1) 导入资料池（幂等：命中已有记录则补链，返回该记录）
       const importRes = await importPanFile({
         file_name: entry.file_name,
-        file_size: locations[0]?.size ?? undefined,
+        file_size: entry.dir ? undefined : locations[0]?.size ?? undefined,
+        is_dir: entry.dir,
         create_share: true,
         locations: locations.map((l) => ({ pan_type: l.pan_type, path: l.path, fid: l.fid, size: l.size })),
       })
@@ -719,12 +719,21 @@ function ImportModal({
   }
 
   return (
-    <ModalShell isOpen title="补充信息并上架" onClose={onClose} width="max-w-xl">
+    <ModalShell isOpen title={entry.dir ? '补充信息并上架文件夹' : '补充信息并上架'} onClose={onClose} width="max-w-xl">
       <div className="space-y-4">
         <div className="rounded-lg bg-slate-50 dark:bg-slate-900/40 p-3 text-sm">
-          <div className="font-medium break-all">{entry.file_name}</div>
+          <div className="flex items-center gap-2">
+            {entry.dir && (
+              <span className="px-1.5 py-0.5 rounded text-[10px] bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400 whitespace-nowrap">
+                整个文件夹
+              </span>
+            )}
+            <span className="font-medium break-all">{entry.file_name}</span>
+          </div>
           <div className="text-xs text-slate-500 mt-1 break-all">{entryPath(entry)}</div>
-          <div className="text-xs text-slate-400 mt-0.5">{formatFileSize(entry.locations[0]?.size)}</div>
+          <div className="text-xs text-slate-400 mt-0.5">
+            {entry.dir ? '分享与发货的都是这个文件夹的链接，买家可看到文件夹内全部内容' : formatFileSize(entry.locations[0]?.size)}
+          </div>
         </div>
 
         {/* 网盘勾选：发货卡券将包含所有勾选盘的链接 */}
@@ -753,7 +762,7 @@ function ImportModal({
                   onChange={() => togglePan(loc.pan_type)}
                 />
                 {panLabel(loc.pan_type)}网盘
-                <span className="text-[10px] opacity-70">{formatFileSize(loc.size)}</span>
+                <span className="text-[10px] opacity-70">{entry.dir ? '整个文件夹' : formatFileSize(loc.size)}</span>
               </label>
             ))}
           </div>

@@ -530,7 +530,14 @@ export function MaterialPool() {
                       </td>
                       <td className="align-top whitespace-nowrap">{row.id}</td>
                       <td className="align-top min-w-[280px] max-w-[340px]">
-                        <div className="font-medium whitespace-pre-wrap break-words">{row.paper_name}</div>
+                        <div className="flex items-start gap-1.5">
+                          <div className="font-medium whitespace-pre-wrap break-words">{row.paper_name}</div>
+                          {row.is_dir && (
+                            <span className="flex-shrink-0 px-1.5 py-0.5 rounded text-[10px] bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400 whitespace-nowrap mt-0.5">
+                              文件夹
+                            </span>
+                          )}
+                        </div>
                         {row.source_type && SOURCE_TYPE_LABELS[row.source_type] && (
                           <span className={`inline-block mt-1 px-1.5 py-0.5 rounded text-xs ${
                             row.source_type === 'quark-manual'

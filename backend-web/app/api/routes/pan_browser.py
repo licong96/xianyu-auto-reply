@@ -269,6 +269,7 @@ async def pan_share(
 class PanImportRequest(BaseModel):
     file_name: str = Field(..., min_length=1, max_length=300, description="文件名（写入 paper_name）")
     file_size: Optional[int] = Field(None, ge=0, description="文件大小（字节）")
+    is_dir: bool = Field(False, description="导入的是整个文件夹：分享链接为文件夹链接")
     create_share: bool = Field(True, description="导入时自动创建分享链接")
     locations: List[LocationItem] = Field(..., min_length=1, description="该文件实际存在的网盘位置")
     # 兼容旧调用：单盘单路径直传
@@ -344,6 +345,7 @@ async def pan_import(
             source_url=f"pan://{first_loc['path']}",
             source_type=source_type,
             file_size=req.file_size,
+            is_dir=req.is_dir,
             pan_type=first_loc["pan_type"],
             pan_path=first_loc["path"],
             pan_url=(first_ok or {}).get("share_url"),

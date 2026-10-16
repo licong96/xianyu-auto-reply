@@ -56,6 +56,8 @@ export interface MaterialPoolItem {
   platform_attributes: Array<Record<string, unknown>> | null
   /** 发布选项覆盖项（一键上架弹窗编辑，空则走默认行为） */
   publish_options: MaterialPoolPublishOptions | null
+  /** 网盘直选导入的是整个文件夹（分享链接为文件夹链接） */
+  is_dir: boolean
   status: string
   account_id: string | null
   material_id: number | null

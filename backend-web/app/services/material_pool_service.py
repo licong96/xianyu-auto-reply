@@ -116,6 +116,7 @@ def _row_to_dict(row: MaterialPool, pan_links: Optional[List[Dict[str, Any]]] = 
         "platform_category_path": row.platform_category_path or [],
         "platform_attributes": row.platform_attributes or [],
         "publish_options": row.publish_options or None,
+        "is_dir": row.is_dir,
         "status": row.status,
         "account_id": row.account_id,
         "material_id": row.material_id,

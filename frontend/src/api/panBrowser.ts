@@ -76,10 +76,11 @@ export const createPanShare = async (
   return post<ApiResponse<{ shares: PanShareItem[] }>>(`${PREFIX}/share`, { locations })
 }
 
-/** 把网盘文件导入资料池（幂等：命中已有记录则补链） */
+/** 把网盘文件/文件夹导入资料池（幂等：命中已有记录则补链） */
 export const importPanFile = async (data: {
   file_name: string
   file_size?: number
+  is_dir?: boolean
   create_share?: boolean
   locations: { pan_type: string; path: string; fid?: string | null; size?: number | null }[]
 }): Promise<ApiResponse<MaterialPoolItem>> => {

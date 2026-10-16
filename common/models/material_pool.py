@@ -98,6 +98,8 @@ class MaterialPool(TimestampMixin, Base):
     # 发布选项覆盖项（一键上架弹窗编辑，与素材库字段对齐）：多图/视频/原价/运费/自提/
     # 所在地/数量/成色/品牌/规格等；为空时走默认硬编码行为（单封面图、包邮、数量1）
     publish_options: Mapped[dict | None] = mapped_column(JSON, comment="发布选项覆盖项（成色/运费/所在地/数量/多图/视频/规格等）")
+    # 网盘直选导入的是整个文件夹（22 号方案第二阶段）：卡券分享链接为文件夹链接
+    is_dir: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0", nullable=False, comment="网盘导入的是整个文件夹")
 
     # ---- 流水线状态 ----
     status: Mapped[str] = mapped_column(
