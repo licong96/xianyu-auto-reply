@@ -115,6 +115,7 @@ def _row_to_dict(row: MaterialPool, pan_links: Optional[List[Dict[str, Any]]] = 
         "platform_channel_category_name": row.platform_channel_category_name,
         "platform_category_path": row.platform_category_path or [],
         "platform_attributes": row.platform_attributes or [],
+        "publish_options": row.publish_options or None,
         "status": row.status,
         "account_id": row.account_id,
         "material_id": row.material_id,
@@ -233,6 +234,9 @@ class MaterialPoolService:
         for key in EDITABLE_FIELDS:
             if key in data and data[key] is not None:
                 setattr(row, key, data[key])
+        # 发布选项整体替换（JSON 对象；PUT 用 exclude_none，传了就该生效，含空对象）
+        if "publish_options" in data:
+            row.publish_options = data["publish_options"]
         await self.session.commit()
         await self.session.refresh(row)
         return _row_to_dict(row)
@@ -442,11 +446,15 @@ class MaterialPoolService:
         pool_id: int,
         account_id: str,
         category_data: Optional[dict] = None,
+        publish_options: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """一键上架编排。成功返回 listed；失败原地停留 failed + error_message，可重试。
 
         category_data: 前端选择的类目（一键上架弹窗内推荐/选择），会持久化到行上，
         失败重试时无需重新选择。
+        publish_options: 前端选择的发布选项（多图/视频/原价/运费/自提/所在地/数量/
+        成色/品牌/规格/标题/描述/售价），与行内已持久化选项 merge（本次传入优先），
+        结果持久化到行上，建素材与发布请求都使用 merge 后的值。
         """
         from app.services.auto_relist_rule_service import AutoRelistRuleService
         from app.services.card_service import CardService
@@ -485,6 +493,21 @@ class MaterialPoolService:
                 row.platform_category_path = category_data.get("platform_category_path") or None
                 row.platform_attributes = category_data.get("platform_attributes") or None
 
+            # merge 发布选项：行内已持久化 < 本次传入；有传入则持久化 merge 结果（重试复用）
+            effective_options: Dict[str, Any] = dict(row.publish_options or {})
+            if publish_options:
+                effective_options.update(publish_options)
+                row.publish_options = effective_options
+            # 标题/描述/售价以选项为准并回写行，保证资料池记录与已发布商品一致
+            opt_title = str(effective_options.get("title") or "").strip()
+            opt_description = str(effective_options.get("description") or "").strip()
+            if opt_title:
+                row.title = opt_title[:200]
+            if opt_description:
+                row.description = opt_description[:1500]
+            if effective_options.get("price") is not None:
+                row.price = float(effective_options["price"])
+
             platform_category_id = row.platform_category_id
             platform_category_name = row.platform_category_name
             platform_channel_category_id = row.platform_channel_category_id
@@ -493,8 +516,8 @@ class MaterialPoolService:
                 raise MaterialPoolError("缺少商品类目，请在上架弹窗中选择类目后再上架")
 
             # commit 会导致 ORM 属性过期，先把后续要用的值全部取到局部变量
-            title = self._build_goods_title(row)
-            description = self._build_goods_description(row)
+            title = opt_title or self._build_goods_title(row)
+            description = opt_description or self._build_goods_description(row)
             card_text = self._build_card_text(row)
             price = float(row.price)
             cover_image = row.cover_image
@@ -504,6 +527,43 @@ class MaterialPoolService:
             relist_rule_id = row.relist_rule_id
             platform_attributes = row.platform_attributes or []
             platform_category_path = row.platform_category_path or []
+
+            # merge 后的发布选项（素材库字段全集，空则等同历史默认行为）
+            option_images = effective_options.get("images") or [cover_image]
+            option_videos = effective_options.get("videos") or []
+            option_specifications = effective_options.get("specifications") or []
+            option_sku_rows = effective_options.get("sku_rows") or []
+            option_shipping_method = effective_options.get("shipping_method") or "free"
+            material_payload: Dict[str, Any] = {
+                "title": title,
+                "description": description,
+                "price": price,
+                "original_price": effective_options.get("original_price"),
+                "images": option_images,
+                "videos": option_videos,
+                "specifications": option_specifications,
+                "sku_rows": option_sku_rows,
+                "quantity": int(effective_options.get("quantity") or 1),
+                # delivery_method 仅为兼容展示字段，实际发布由 shipping_method 决定
+                "delivery_method": "pickup" if option_shipping_method == "none" else "express",
+                "shipping_method": option_shipping_method,
+                "support_pickup": bool(effective_options.get("support_pickup", False)),
+                "postage": float(effective_options.get("postage") or 0),
+                "address": effective_options.get("address"),
+                "address_expected_text": effective_options.get("address_expected_text"),
+                "brand": effective_options.get("brand"),
+                "condition": effective_options.get("condition") or "全新",
+            }
+            # 发布请求可选覆盖项（均为 PublishSingleRequest 合法字段，交给 pydantic 校验）
+            publish_req_overrides = {
+                key: effective_options[key]
+                for key in (
+                    "original_price", "videos", "quantity", "stock", "specifications", "sku_rows",
+                    "address", "address_expected_text", "delivery_method", "shipping_method",
+                    "support_pickup", "postage", "brand", "condition",
+                )
+                if key in effective_options
+            }
 
             row.status = STATUS_LISTING
             row.account_id = account_id
@@ -527,21 +587,7 @@ class MaterialPoolService:
                 mat_svc = ProductMaterialService(self.session)
                 material = await mat_svc.create(
                     user.id,
-                    {
-                        "title": title,
-                        "description": description,
-                        "price": price,
-                        "original_price": None,
-                        "images": [cover_image],
-                        "specifications": [],
-                        "sku_rows": [],
-                        "videos": [],
-                        "delivery_method": "express",
-                        "shipping_method": "free",
-                        "postage": 0,
-                        "quantity": 1,
-                        **material_category_fields,
-                    },
+                    {**material_payload, **material_category_fields},
                 )
                 material_id = material.id
                 await self.session.execute(
@@ -561,8 +607,9 @@ class MaterialPoolService:
                     title=title,
                     description=description,
                     price=price,
-                    images=[cover_image],
+                    images=option_images,
                     **material_category_fields,
+                    **publish_req_overrides,
                 )
                 pub_svc = PublishExecutorService(self.session)
                 result = await pub_svc.publish_single(

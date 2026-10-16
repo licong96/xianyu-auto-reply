@@ -40,6 +40,7 @@ class PoolUpdateRequest(BaseModel):
     description: Optional[str] = None
     price: Optional[float] = Field(None, ge=0)
     cover_image: Optional[str] = Field(None, max_length=500)
+    publish_options: Optional[Dict[str, Any]] = Field(None, description="发布选项覆盖项（JSON 对象，整体替换）")
 
 
 class ApproveRequest(BaseModel):
@@ -60,15 +61,42 @@ class CategorySelection(BaseModel):
     category_source: str = Field("manual", pattern="^(manual|recommendation)$")
 
 
+class PublishOptionsRequest(BaseModel):
+    """一键上架时选择的发布选项（与素材库/单品发布字段对齐，全部可选）。
+
+    后端与行内已持久化选项 merge（本次传入优先），结果持久化到行上，
+    建素材与发布请求统一使用 merge 后的值；全部留空则等同历史默认行为。
+    """
+    title: Optional[str] = Field(None, max_length=200, description="商品标题（覆盖自动生成）")
+    description: Optional[str] = Field(None, max_length=1500, description="商品描述（覆盖自动生成）")
+    price: Optional[float] = Field(None, gt=0, description="售价")
+    original_price: Optional[float] = Field(None, gt=0, description="原价")
+    images: Optional[List[str]] = Field(None, min_length=1, max_length=9, description="商品图片")
+    videos: Optional[List[Dict[str, Any]]] = Field(None, max_length=3, description="视频素材")
+    quantity: Optional[int] = Field(None, ge=1, le=999999, description="发布数量")
+    specifications: Optional[List[Dict[str, Any]]] = Field(None, max_length=2, description="商品规格")
+    sku_rows: Optional[List[Dict[str, Any]]] = Field(None, max_length=200, description="规格组合价格库存")
+    address: Optional[str] = Field(None, max_length=200, description="宝贝所在地")
+    address_expected_text: Optional[str] = Field(None, max_length=200, description="所在地期望文本")
+    delivery_method: Optional[str] = Field(None, pattern="^(express|pickup)$", description="发货方式")
+    shipping_method: Optional[str] = Field(None, pattern="^(free|distance|fixed|template|none)$", description="运费方式")
+    support_pickup: Optional[bool] = Field(None, description="支持自提")
+    postage: Optional[float] = Field(None, ge=0, le=1000, description="邮费")
+    brand: Optional[str] = Field(None, max_length=100, description="品牌")
+    condition: Optional[str] = Field(None, max_length=20, description="成色")
+
+
 class ListRequest(BaseModel):
     account_id: str = Field(..., min_length=1, description="闲鱼账号ID")
     category: Optional[CategorySelection] = None
+    publish_options: Optional[PublishOptionsRequest] = None
 
 
 class BatchListRequest(BaseModel):
     ids: List[int] = Field(..., min_length=1, max_length=50)
     account_id: str = Field(..., min_length=1)
     category: Optional[CategorySelection] = None
+    publish_options: Optional[PublishOptionsRequest] = Field(None, description="公共发布选项，逐行与各行已存选项 merge")
 
 
 def _pool_error_resp(exc: MaterialPoolError) -> ApiResponse:
@@ -211,6 +239,7 @@ async def list_goods(
             pool_id,
             req.account_id,
             category_data=req.category.model_dump(exclude_none=True) if req.category else None,
+            publish_options=req.publish_options.model_dump(exclude_none=True) if req.publish_options else None,
         )
     except MaterialPoolError as exc:
         return _pool_error_resp(exc)
@@ -230,9 +259,13 @@ async def batch_list_goods(
     results = []
     success_count = 0
     category_data = req.category.model_dump(exclude_none=True) if req.category else None
+    publish_options = req.publish_options.model_dump(exclude_none=True) if req.publish_options else None
     for pool_id in req.ids:
         try:
-            data = await svc.list_to_pan(current_user, pool_id, req.account_id, category_data=category_data)
+            data = await svc.list_to_pan(
+                current_user, pool_id, req.account_id,
+                category_data=category_data, publish_options=publish_options,
+            )
             results.append({"id": pool_id, "success": True, "data": data})
             success_count += 1
         except MaterialPoolError as exc:

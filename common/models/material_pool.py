@@ -95,6 +95,9 @@ class MaterialPool(TimestampMixin, Base):
     platform_channel_category_name: Mapped[str | None] = mapped_column(String(100), comment="渠道类目名称")
     platform_category_path: Mapped[list | None] = mapped_column(JSON, comment="类目路径（闲鱼返回）")
     platform_attributes: Mapped[list | None] = mapped_column(JSON, comment="平台属性标签（闲鱼返回）")
+    # 发布选项覆盖项（一键上架弹窗编辑，与素材库字段对齐）：多图/视频/原价/运费/自提/
+    # 所在地/数量/成色/品牌/规格等；为空时走默认硬编码行为（单封面图、包邮、数量1）
+    publish_options: Mapped[dict | None] = mapped_column(JSON, comment="发布选项覆盖项（成色/运费/所在地/数量/多图/视频/规格等）")
 
     # ---- 流水线状态 ----
     status: Mapped[str] = mapped_column(

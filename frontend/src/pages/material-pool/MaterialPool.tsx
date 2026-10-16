@@ -9,7 +9,7 @@
  * 5. 触发上传夸克网盘
  * 6. 一键上架（选择闲鱼账号：建素材->发布->卡券->续售规则）
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   BookOpen,
@@ -20,10 +20,13 @@ import {
   Download,
   ExternalLink,
   Loader2,
+  MapPin,
   Pencil,
   RefreshCw,
   Rocket,
   Search,
+  Trash2,
+  Upload,
   UploadCloud,
   X,
   XCircle,
@@ -42,11 +45,25 @@ import {
   uploadMaterialPoolToPan,
   type MaterialPoolCategory,
   type MaterialPoolItem,
+  type MaterialPoolPublishOptions,
   SOURCE_TYPE_LABELS,
   SOURCE_TYPE_OPTIONS,
 } from '@/api/materialPool'
+import {
+  getPublishAccountCapability,
+  uploadProductImages,
+  uploadProductVideos,
+  type MaterialVideo,
+  type PublishAccountCapability,
+  type PublishSpecification,
+  type PublishSkuRow,
+} from '@/api/productPublish'
 import { PlatformCategoryRecommender } from '@/pages/product-publish/PlatformCategoryRecommender'
-import type { PublishForm } from '@/pages/product-publish/publishTypes'
+import { createInternalSkuRows, createInternalSpecifications } from '@/pages/product-publish/MaterialFormModal'
+import ProductPublishForm from '@/pages/product-publish/ProductPublishForm'
+import ProductVideoUploader from '@/pages/product-publish/ProductVideoUploader'
+import AddressPickerModal from '@/pages/product-publish/AddressPickerModal'
+import { findDuplicateSpecificationValue, type PublishForm, type ShippingMethod } from '@/pages/product-publish/publishTypes'
 import { ConfirmModal } from '@/components/common/ConfirmModal'
 import { Select } from '@/components/common/Select'
 import { PageLoading } from '@/components/common/Loading'
@@ -335,10 +352,10 @@ export function MaterialPool() {
     }
   }
 
-  const handleList = async (id: number, accountId: string, category?: MaterialPoolCategory) => {
+  const handleList = async (id: number, accountId: string, category?: MaterialPoolCategory, publishOptions?: MaterialPoolPublishOptions) => {
     setSubmitting(true)
     try {
-      const res = await listMaterialPoolGoods(id, accountId, category)
+      const res = await listMaterialPoolGoods(id, accountId, category, publishOptions)
       if (res.success) {
         addToast({ type: 'success', message: '上架完成，商品已在售' })
         setListRow(null)
@@ -357,10 +374,10 @@ export function MaterialPool() {
     }
   }
 
-  const handleBatchList = async (accountId: string, category?: MaterialPoolCategory) => {
+  const handleBatchList = async (accountId: string, category?: MaterialPoolCategory, publishOptions?: MaterialPoolPublishOptions) => {
     setSubmitting(true)
     try {
-      const res = await batchListMaterialPoolGoods(selectedIds, accountId, category)
+      const res = await batchListMaterialPoolGoods(selectedIds, accountId, category, publishOptions)
       if (res.success && res.data) {
         addToast({
           type: res.data.success_count > 0 ? 'success' : 'error',
@@ -758,17 +775,20 @@ export function MaterialPool() {
         accountOptions={accountOptions}
         submitting={submitting}
         onClose={() => setListRow(null)}
-        onSubmit={handleList}
+        onSubmit={(accountId, category, publishOptions) =>
+          listRow ? handleList(listRow.id, accountId, category, publishOptions) : Promise.resolve(false)
+        }
       />
 
       {/* 批量上架弹窗 */}
       <ListModal
-        row={batchListOpen ? ({ id: 0, paper_name: `批量上架 ${selectedIds.length} 条资料` } as MaterialPoolItem) : null}
+        row={null}
+        batchCount={batchListOpen ? selectedIds.length : 0}
         accounts={accounts}
         accountOptions={accountOptions}
         submitting={submitting}
         onClose={() => setBatchListOpen(false)}
-        onSubmit={async (_id, accountId, category) => handleBatchList(accountId, category)}
+        onSubmit={(accountId, category, publishOptions) => handleBatchList(accountId, category, publishOptions)}
       />
 
       {/* 不售确认 */}
@@ -1014,11 +1034,29 @@ function ApproveModal({
 
 // ==================== 一键上架弹窗 ====================
 
-/** 与后端生成规则保持一致：学校 年份 年级 + 试卷名（截 80 字） */
+/** 与后端 _build_goods_title 生成规则保持一致：剥「精品解析：」等前缀，学校+年份+年级+试卷名（截 30 字） */
 function buildGoodsTitle(row: MaterialPoolItem): string {
-  const parts = [row.school, row.year, row.grade].filter(Boolean).join(' ')
-  const title = parts ? `${parts} ${row.paper_name}` : row.paper_name
-  return title.slice(0, 80)
+  let name = row.paper_name || '试卷资料'
+  for (const prefix of ['精品解析：', '精品解析:', '解析：', '解析:']) {
+    if (name.startsWith(prefix)) {
+      name = name.slice(prefix.length)
+      break
+    }
+  }
+  const base = [row.school, row.year, row.grade].filter(Boolean).join('')
+  const title = base ? `${base}${name}` : name
+  return title.slice(0, 30)
+}
+
+/** 与后端 _build_goods_description 生成规则保持一致（截 1500 字） */
+function buildGoodsDescription(row: MaterialPoolItem): string {
+  const lines = [`【资料名称】${row.paper_name || '-'}`]
+  if (row.school) lines.push(`【学校】${row.school}`)
+  if (row.year) lines.push(`【年份】${row.year}`)
+  if (row.grade) lines.push(`【年级】${row.grade}`)
+  if (row.tags?.length) lines.push(`【标签】${row.tags.join(' ')}`)
+  lines.push('', '付款后自动发送网盘下载链接，请尽快保存。')
+  return lines.join('\n').slice(0, 1500)
 }
 
 function buildEmptyCategoryForm(accountId: string, title: string, description: string): PublishForm {
@@ -1052,34 +1090,78 @@ function buildEmptyCategoryForm(accountId: string, title: string, description: s
   }
 }
 
+// 成色选项，与素材库 AI 上架面板保持一致
+const CONDITION_OPTIONS = ['全新', '几乎全新', '轻微使用痕迹', '明显使用痕迹', '重度使用痕迹']
+
+// 运费方式选项，与商品发布表单保持一致
+const SHIPPING_OPTIONS: Array<{ value: ShippingMethod; label: string }> = [
+  { value: 'free', label: '包邮' },
+  { value: 'distance', label: '按距离计费' },
+  { value: 'fixed', label: '一口价' },
+  { value: 'template', label: '运费模板' },
+  { value: 'none', label: '无需邮寄' },
+]
+
 function ListModal({
   row,
+  batchCount = 0,
   accounts,
   accountOptions,
   submitting,
   onClose,
   onSubmit,
 }: {
+  /** 单个上架的行；批量模式传 null */
   row: MaterialPoolItem | null
+  /** 批量模式：选中行数（>0 即批量） */
+  batchCount?: number
   accounts: AccountDetail[]
   accountOptions: Array<{ value: string; label: string; key: string }>
   submitting: boolean
   onClose: () => void
-  onSubmit: (id: number, accountId: string, category?: MaterialPoolCategory) => Promise<boolean>
+  onSubmit: (accountId: string, category?: MaterialPoolCategory, publishOptions?: MaterialPoolPublishOptions) => Promise<boolean>
 }) {
   const { addToast } = useUIStore()
+  const isBatch = batchCount > 0
+  const isOpen = isBatch || row !== null
   const [accountId, setAccountId] = useState('')
+  // 批量模式：类目推荐用的表单（标题/描述仅用于推荐）
   const [catForm, setCatForm] = useState<PublishForm>(() => buildEmptyCategoryForm('', '', ''))
+  // 单个模式：完整发布表单（与素材库共用 ProductPublishForm）
+  const [form, setForm] = useState<PublishForm>(() => buildEmptyCategoryForm('', '', ''))
+  const [categoryLocked, setCategoryLocked] = useState(false)
+  const [images, setImages] = useState<string[]>([])
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [uploading, setUploading] = useState(false)
+  const [capability, setCapability] = useState<PublishAccountCapability | null>(null)
+  const [capabilityLoading, setCapabilityLoading] = useState(false)
+  // 批量模式：公共发布选项
+  const [sharedForm, setSharedForm] = useState({
+    shipping_method: 'free' as ShippingMethod,
+    postage: '0',
+    support_pickup: false,
+    address: '',
+    address_expected_text: undefined as string | undefined,
+    quantity: 1,
+    condition: '全新',
+    brand: '',
+  })
+  const [showAddressPicker, setShowAddressPicker] = useState(false)
 
-  // 打开弹窗时初始化：标题/描述用于类目推荐，已持久化的类目自动回填
+  // 单个模式：打开弹窗时预填——标题/描述/价格（行值或自动生成）、图片（已存选项或封面）、
+  // 类目（行内已持久化）、其余发布选项（行 publish_options）
   useEffect(() => {
-    if (!row) return
-    const title = row.id ? buildGoodsTitle(row) : ''
-    const description = row.id
-      ? `【资料名称】${row.paper_name || '-'}${row.school ? `\n【学校】${row.school}` : ''}${row.year ? `\n【年份】${row.year}` : ''}${row.grade ? `\n【年级】${row.grade}` : ''}`
-      : '试卷资料 电子版'
-    setCatForm((current) => ({
-      ...buildEmptyCategoryForm(current.account_id, title, description),
+    if (isBatch || !row) return
+    const opts = row.publish_options
+    const specifications = createInternalSpecifications((opts?.specifications ?? []) as unknown as PublishSpecification[])
+    const title = row.title?.trim() || buildGoodsTitle(row)
+    const description = row.description?.trim() || buildGoodsDescription(row)
+    setImages(opts?.images?.length ? [...opts.images] : row.cover_image ? [row.cover_image] : [])
+    setCategoryLocked(Boolean(row.platform_category_id || row.platform_channel_category_id))
+    setForm({
+      ...buildEmptyCategoryForm('', title, description),
+      price: opts?.price != null ? String(opts.price) : row.price != null ? String(row.price) : '',
+      original_price: opts?.original_price != null ? String(opts.original_price) : '',
       ...(row.platform_category_id || row.platform_channel_category_id
         ? {
             category: row.platform_channel_category_name || row.platform_category_name || '',
@@ -1087,14 +1169,43 @@ function ListModal({
             platform_category_name: row.platform_category_name || '',
             platform_channel_category_id: row.platform_channel_category_id || '',
             platform_channel_category_name: row.platform_channel_category_name || '',
-            platform_category_path: row.platform_category_path || [],
+            platform_category_path: (row.platform_category_path || []) as PublishForm['platform_category_path'],
             platform_attributes: (row.platform_attributes || []) as PublishForm['platform_attributes'],
             category_source: 'recommendation' as const,
           }
         : {}),
-    }))
+      videos: (opts?.videos ?? []) as MaterialVideo[],
+      quantity: opts?.quantity ?? 1,
+      address: opts?.address ?? '',
+      address_expected_text: opts?.address_expected_text,
+      delivery_method: opts?.delivery_method ?? 'express',
+      shipping_method: opts?.shipping_method ?? 'free',
+      support_pickup: opts?.support_pickup ?? false,
+      postage: String(opts?.postage ?? 0),
+      brand: opts?.brand ?? '',
+      condition: opts?.condition ?? '全新',
+      specifications,
+      sku_rows: createInternalSkuRows((opts?.sku_rows ?? []) as unknown as PublishSkuRow[], specifications),
+    })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [row])
+  }, [row, isBatch])
+
+  // 批量模式：打开弹窗时重置公共选项，标题/描述仅用于类目推荐
+  useEffect(() => {
+    if (!isBatch) return
+    setCatForm(buildEmptyCategoryForm('', '', '试卷资料 电子版'))
+    setSharedForm({
+      shipping_method: 'free',
+      postage: '0',
+      support_pickup: false,
+      address: '',
+      address_expected_text: undefined,
+      quantity: 1,
+      condition: '全新',
+      brand: '',
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [batchCount])
 
   useEffect(() => {
     if (accounts.length === 1 && !accountId) setAccountId(accounts[0].id)
@@ -1103,54 +1214,414 @@ function ListModal({
   // 账号变化时同步给类目推荐组件，使其按该账号重新推荐
   useEffect(() => {
     setCatForm((current) => (current.account_id === accountId ? current : { ...current, account_id: accountId }))
+    setForm((current) => (current.account_id === accountId ? current : { ...current, account_id: accountId }))
   }, [accountId])
 
-  const hasCategory = Boolean(catForm.platform_category_id || catForm.platform_channel_category_id)
+  // 单个模式：检测账号发布能力（普通卖家收起鱼小铺字段：规格/库存/视频）
+  useEffect(() => {
+    if (isBatch || !accountId) {
+      setCapability(null)
+      return
+    }
+    let cancelled = false
+    setCapability(null)
+    setCapabilityLoading(true)
+    getPublishAccountCapability(accountId)
+      .then((response) => {
+        if (!cancelled) setCapability(response.data ?? null)
+      })
+      .catch(() => {
+        if (!cancelled) setCapability(null)
+      })
+      .finally(() => {
+        if (!cancelled) setCapabilityLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [accountId, isBatch])
+
+  const isFishShop = capability?.is_fish_shop !== false
+  const hasCategory = isBatch
+    ? Boolean(catForm.platform_category_id || catForm.platform_channel_category_id)
+    : Boolean(form.platform_category_id || form.platform_channel_category_id)
+  const activeCategoryForm = isBatch ? catForm : form
+  const setActiveCategoryForm = isBatch
+    ? (patch: Partial<PublishForm>) => setCatForm((current) => ({ ...current, ...patch }))
+    : (patch: Partial<PublishForm>) => setForm((current) => ({ ...current, ...patch }))
+
+  const handleUploadImages = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files || [])
+    if (!files.length) return
+    if (images.length + files.length > 9) {
+      addToast({ type: 'warning', message: '最多上传9张图片' })
+      return
+    }
+    setUploading(true)
+    try {
+      const response = await uploadProductImages(files)
+      if (!response.success || !response.data) {
+        addToast({ type: 'error', message: response.message || '图片上传失败' })
+        return
+      }
+      const paths = response.data.paths?.length ? response.data.paths : response.data.urls
+      setImages((current) => [...current, ...paths])
+    } catch (error) {
+      addToast({ type: 'error', message: getApiErrorMessage(error, '图片上传失败') })
+    } finally {
+      setUploading(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+
+  const handleSpecUpload = async (file: File): Promise<string | null> => {
+    setUploading(true)
+    try {
+      const response = await uploadProductImages([file])
+      if (!response.success || !response.data) {
+        addToast({ type: 'error', message: response.message || '规格图片上传失败' })
+        return null
+      }
+      return response.data.paths[0] || response.data.urls[0] || null
+    } catch {
+      addToast({ type: 'error', message: '规格图片上传失败' })
+      return null
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const handleVideoUpload = async (file: File): Promise<MaterialVideo | null> => {
+    setUploading(true)
+    try {
+      const response = await uploadProductVideos([file])
+      if (!response.success || !response.data) {
+        addToast({ type: 'error', message: response.message || '视频上传失败' })
+        return null
+      }
+      return response.data.videos[0] || { url: response.data.urls[0], path: response.data.paths[0], name: file.name, size: file.size }
+    } catch {
+      addToast({ type: 'error', message: '视频上传失败' })
+      return null
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const buildCategory = (): MaterialPoolCategory => ({
+    category: activeCategoryForm.category,
+    platform_category_id: activeCategoryForm.platform_category_id,
+    platform_category_name: activeCategoryForm.platform_category_name,
+    platform_channel_category_id: activeCategoryForm.platform_channel_category_id,
+    platform_channel_category_name: activeCategoryForm.platform_channel_category_name,
+    platform_category_path: activeCategoryForm.platform_category_path,
+    platform_attributes: activeCategoryForm.platform_attributes as unknown as Array<Record<string, unknown>>,
+    category_source: activeCategoryForm.category_source,
+  })
 
   const handleSubmit = async () => {
-    if (!row || !accountId) return
+    if (!accountId) return
     if (!hasCategory) {
       addToast({ type: 'error', message: '请先选择商品类目（下方推荐列表点选其一）' })
       return
     }
-    const category: MaterialPoolCategory = {
-      category: catForm.category,
-      platform_category_id: catForm.platform_category_id,
-      platform_category_name: catForm.platform_category_name,
-      platform_channel_category_id: catForm.platform_channel_category_id,
-      platform_channel_category_name: catForm.platform_channel_category_name,
-      platform_category_path: catForm.platform_category_path,
-      platform_attributes: catForm.platform_attributes as unknown as Array<Record<string, unknown>>,
-      category_source: catForm.category_source,
+    const category = buildCategory()
+
+    if (isBatch) {
+      const publishOptions: MaterialPoolPublishOptions = {
+        quantity: Math.max(1, Number(sharedForm.quantity) || 1),
+        delivery_method: sharedForm.shipping_method === 'none' ? 'pickup' : 'express',
+        shipping_method: sharedForm.shipping_method,
+        support_pickup: sharedForm.support_pickup,
+        postage: Number(sharedForm.postage) || 0,
+        address: sharedForm.address.trim() || undefined,
+        address_expected_text: sharedForm.address_expected_text?.trim() || undefined,
+        brand: sharedForm.brand.trim() || undefined,
+        condition: sharedForm.condition,
+      }
+      await onSubmit(accountId, category, publishOptions)
+      return
     }
-    await onSubmit(row.id, accountId, category)
+
+    if (!row) return
+    if (!form.title.trim()) {
+      addToast({ type: 'warning', message: '请填写商品标题' })
+      return
+    }
+    if (!form.description.trim()) {
+      addToast({ type: 'warning', message: '请填写商品描述' })
+      return
+    }
+    if (form.description.length > 1500) {
+      addToast({ type: 'warning', message: '商品描述不能超过1500字' })
+      return
+    }
+    const price = Number(form.price)
+    if (!form.price || Number.isNaN(price) || price <= 0) {
+      addToast({ type: 'warning', message: '请填写有效价格' })
+      return
+    }
+    if (images.length === 0) {
+      addToast({ type: 'warning', message: '请至少保留一张商品图片' })
+      return
+    }
+    if (isFishShop && form.specifications.length > 0) {
+      const invalidSpec = form.specifications.find((spec) => !spec.name.trim() || !spec.values.some((value) => value.name.trim()))
+      if (invalidSpec) {
+        addToast({ type: 'warning', message: '请完善商品规格类型和规格值' })
+        return
+      }
+      const duplicateSpecValue = findDuplicateSpecificationValue(form.specifications)
+      if (duplicateSpecValue) {
+        addToast({ type: 'warning', message: `规格“${duplicateSpecValue.specificationName}”存在重复规格值：${duplicateSpecValue.valueName}` })
+        return
+      }
+      if (!form.sku_rows.length) {
+        addToast({ type: 'warning', message: '请等待规格组合生成后再上架' })
+        return
+      }
+      const invalidSku = form.sku_rows.find((skuRow) => !skuRow.price || Number(skuRow.price) <= 0 || !skuRow.stock.trim() || Number(skuRow.stock) < 0)
+      if (invalidSku) {
+        addToast({ type: 'warning', message: '请完善所有规格的价格和库存' })
+        return
+      }
+    }
+
+    // 普通卖家不发视频/规格/库存（与单品发布行为一致）
+    const publishOptions: MaterialPoolPublishOptions = {
+      title: form.title.trim(),
+      description: form.description,
+      price,
+      original_price: form.original_price.trim() ? Number(form.original_price) : undefined,
+      images,
+      videos: isFishShop ? form.videos : [],
+      quantity: isFishShop ? form.quantity : 1,
+      delivery_method: form.delivery_method,
+      shipping_method: form.shipping_method,
+      support_pickup: form.support_pickup,
+      postage: Number(form.postage) || 0,
+      address: form.address.trim() || undefined,
+      address_expected_text: form.address_expected_text?.trim() || undefined,
+      brand: form.brand.trim() || undefined,
+      condition: form.condition,
+      specifications: isFishShop
+        ? form.specifications
+            .filter((spec) => spec.name.trim())
+            .map((spec) => ({
+              name: spec.name.trim(),
+              support_image: spec.supportImage,
+              values: spec.values
+                .filter((value) => value.name.trim())
+                .map((value) => ({ name: value.name.trim(), image: value.image || undefined })),
+            }))
+        : [],
+      sku_rows: isFishShop
+        ? form.sku_rows.map((skuRow) => ({ specs: skuRow.specs, price: Number(skuRow.price), stock: Number(skuRow.stock) || 0 }))
+        : [],
+    }
+    await onSubmit(accountId, category, publishOptions)
+  }
+
+  const categoryBlock = (
+    <div>
+      <label className="input-label">商品类目（根据标题自动推荐，点选确认）</label>
+      <div className="mt-1 rounded-xl border border-slate-200 dark:border-slate-700 p-3">
+        <PlatformCategoryRecommender
+          form={activeCategoryForm}
+          onChange={setActiveCategoryForm}
+          categoryLocked={!isBatch && categoryLocked}
+          onReselectCategory={() => setCategoryLocked(false)}
+        />
+      </div>
+    </div>
+  )
+
+  if (isBatch) {
+    return (
+      <ModalShell isOpen={isOpen} title={`批量上架 ${batchCount} 条资料`} onClose={onClose} width="max-w-2xl">
+        <div className="space-y-4">
+          <div className="rounded-lg bg-slate-50 dark:bg-slate-700/50 p-3 text-xs text-slate-500 dark:text-slate-400 space-y-1">
+            <p>上架流程：创建商品素材 → 发布到闲鱼 → 创建网盘卡券并绑定 → 开启自动续售。</p>
+            <p>类目与公共选项会应用到本批每一条，并与各条已保存的发布选项合并；失败重试无需重新选择。</p>
+          </div>
+          <div>
+            <label className="input-label">选择闲鱼账号</label>
+            <Select value={accountId} onChange={setAccountId} options={accountOptions} placeholder="请选择账号" />
+          </div>
+          <div className="vben-card">
+            <div className="vben-card-header"><h2 className="vben-card-title">公共发布选项</h2><span className="text-xs text-slate-400">标题/图片等各条用自己的，此处为共享默认值</span></div>
+            <div className="vben-card-body space-y-4">
+              <div>
+                <label className="input-label">发货设置</label>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                  {SHIPPING_OPTIONS.map((option) => (
+                    <label key={option.value} className="inline-flex items-center gap-1.5 text-sm text-slate-600 dark:text-slate-300 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="pool_batch_shipping"
+                        checked={sharedForm.shipping_method === option.value}
+                        onChange={() => setSharedForm((current) => ({ ...current, shipping_method: option.value }))}
+                      />
+                      {option.label}
+                    </label>
+                  ))}
+                  <label className="inline-flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300 cursor-pointer">
+                    <span>支持自提</span>
+                    <input
+                      type="checkbox"
+                      checked={sharedForm.support_pickup}
+                      onChange={(event) => setSharedForm((current) => ({ ...current, support_pickup: event.target.checked }))}
+                    />
+                  </label>
+                </div>
+                {sharedForm.shipping_method !== 'free' && sharedForm.shipping_method !== 'none' && (
+                  <div className="mt-3 max-w-[200px]">
+                    <label className="input-label">运费（元）</label>
+                    <input
+                      type="number"
+                      className="input-ios"
+                      min="0"
+                      step="0.01"
+                      placeholder="0.00"
+                      value={sharedForm.postage}
+                      onChange={(event) => setSharedForm((current) => ({ ...current, postage: event.target.value }))}
+                    />
+                  </div>
+                )}
+                <div className="mt-3">
+                  <label className="input-label">宝贝所在地（各条单独设置过的不会被覆盖）</label>
+                  <button type="button" className="input-ios text-left flex items-center gap-2" onClick={() => setShowAddressPicker(true)}>
+                    <MapPin className="w-4 h-4 text-slate-500" />
+                    <span className="truncate flex-1">{sharedForm.address || '不设置（跟随各条默认）'}</span>
+                    <ChevronRight className="w-4 h-4 text-slate-400" />
+                  </button>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="input-group">
+                  <label className="input-label">成色</label>
+                  <select className="input-ios" value={sharedForm.condition} onChange={(event) => setSharedForm((current) => ({ ...current, condition: event.target.value }))}>
+                    {CONDITION_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
+                  </select>
+                </div>
+                <div className="input-group">
+                  <label className="input-label">品牌</label>
+                  <input className="input-ios" placeholder="可空" value={sharedForm.brand} onChange={(event) => setSharedForm((current) => ({ ...current, brand: event.target.value }))} />
+                </div>
+                <div className="input-group">
+                  <label className="input-label">发布数量</label>
+                  <input
+                    type="number"
+                    min="1"
+                    className="input-ios"
+                    value={sharedForm.quantity}
+                    onChange={(event) => setSharedForm((current) => ({ ...current, quantity: Math.max(1, Number(event.target.value) || 1) }))}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+          {categoryBlock}
+          <div className="flex justify-end gap-3 pt-2">
+            <button onClick={onClose} className="btn-ios-secondary">取消</button>
+            <button
+              onClick={handleSubmit}
+              disabled={submitting || !accountId}
+              className="btn-ios-primary inline-flex items-center gap-2"
+            >
+              {submitting && <Loader2 className="w-4 h-4 animate-spin" />}
+              确认上架
+            </button>
+          </div>
+          <AddressPickerModal
+            open={showAddressPicker}
+            currentValue={sharedForm.address}
+            onClose={() => setShowAddressPicker(false)}
+            onSelect={(address, expectedText) => {
+              setSharedForm((current) => ({ ...current, address, address_expected_text: expectedText }))
+              setShowAddressPicker(false)
+            }}
+          />
+        </div>
+      </ModalShell>
+    )
   }
 
   return (
-    <ModalShell isOpen={row !== null} title="一键上架到闲鱼" onClose={onClose} width="max-w-2xl">
+    <ModalShell isOpen={isOpen} title="一键上架到闲鱼" onClose={onClose} width="max-w-4xl">
       <div className="space-y-4">
         <p className="text-sm text-slate-600 dark:text-slate-400 break-all">
           「{row?.paper_name}」
         </p>
         <div className="rounded-lg bg-slate-50 dark:bg-slate-700/50 p-3 text-xs text-slate-500 dark:text-slate-400 space-y-1">
           <p>上架流程：创建商品素材 → 发布到闲鱼 → 创建网盘卡券并绑定 → 开启自动续售。</p>
-          <p>类目选择后会被记住，失败重试无需重新选择。</p>
+          <p>以下选项与素材库字段一致，编辑后会同步进素材库；类目与选项选择后会被记住，失败重试无需重新选择。</p>
         </div>
         <div>
           <label className="input-label">选择闲鱼账号</label>
           <Select value={accountId} onChange={setAccountId} options={accountOptions} placeholder="请选择账号" />
         </div>
-        <div>
-          <label className="input-label">商品类目（根据标题自动推荐，点选确认）</label>
-          <div className="mt-1 rounded-xl border border-slate-200 dark:border-slate-700 p-3">
-            <PlatformCategoryRecommender form={catForm} onChange={(patch) => setCatForm((current) => ({ ...current, ...patch }))} />
+
+        <div className="vben-card">
+          <div className="vben-card-header">
+            <h2 className="vben-card-title">商品图片与视频</h2>
+            <span className="text-xs text-slate-400">{images.length}/9 图 · {form.videos.length}/3 视频</span>
+          </div>
+          <div className="vben-card-body">
+            <div className="flex flex-wrap gap-2">
+              {images.map((url, index) => (
+                <div key={`${url}-${index}`} className="relative h-20 w-20 overflow-hidden rounded-lg border border-slate-200 dark:border-slate-600 group">
+                  <img src={coverImageToUrl(url)} alt="" className="h-full w-full object-cover" />
+                  {index === 0 && <span className="absolute bottom-0 left-0 right-0 bg-blue-500/80 py-0.5 text-center text-[10px] text-white">首图</span>}
+                  <button
+                    type="button"
+                    title="移除图片"
+                    onClick={() => setImages((current) => current.filter((_, itemIndex) => itemIndex !== index))}
+                    className="absolute right-0.5 top-0.5 rounded bg-black/60 p-0.5 text-white opacity-0 transition-opacity group-hover:opacity-100 hover:bg-red-500"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+              {images.length < 9 && (
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading}
+                  className="flex h-20 w-20 flex-col items-center justify-center rounded-lg border-2 border-dashed border-slate-300 text-slate-400 transition-colors hover:border-blue-400 hover:text-blue-500 disabled:opacity-50 dark:border-slate-600"
+                >
+                  {uploading ? <Loader2 className="h-5 w-5 animate-spin" /> : <Upload className="h-5 w-5" />}
+                  <span className="mt-1 text-xs">{uploading ? '上传中' : '添加图片'}</span>
+                </button>
+              )}
+            </div>
+            <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleUploadImages} />
+            <ProductVideoUploader
+              videos={form.videos}
+              onUploadVideo={handleVideoUpload}
+              onChange={(videos) => setForm((current) => ({ ...current, videos }))}
+            />
           </div>
         </div>
+
+        <ProductPublishForm
+          form={form}
+          setForm={setForm}
+          accounts={[]}
+          showAccount={false}
+          onUploadSpecImage={handleSpecUpload}
+          categoryLocked={categoryLocked}
+          onCategoryEdit={() => setCategoryLocked(false)}
+          unlockCategoryOnTextChange={false}
+          accountCapability={capability}
+          capabilityLoading={capabilityLoading}
+        />
+
         <div className="flex justify-end gap-3 pt-2">
           <button onClick={onClose} className="btn-ios-secondary">取消</button>
           <button
             onClick={handleSubmit}
-            disabled={submitting || !accountId}
+            disabled={submitting || !accountId || uploading}
             className="btn-ios-primary inline-flex items-center gap-2"
           >
             {submitting && <Loader2 className="w-4 h-4 animate-spin" />}

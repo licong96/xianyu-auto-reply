@@ -1469,6 +1469,7 @@ class DatabaseInitializer:
                 description TEXT DEFAULT NULL COMMENT '商品描述',
                 price DECIMAL(10,2) DEFAULT NULL COMMENT '售价（审核时人工填写）',
                 cover_image VARCHAR(500) DEFAULT NULL COMMENT '封面图（PDF 首页转图）',
+                publish_options JSON DEFAULT NULL COMMENT '发布选项覆盖项（成色/运费/所在地/数量/多图/视频/规格等）',
                 status VARCHAR(20) NOT NULL DEFAULT 'crawled' COMMENT '状态机：crawled/uploaded/pending/approved/listing/listed/rejected/failed',
                 account_id VARCHAR(80) DEFAULT NULL COMMENT '上架目标闲鱼账号（xy_accounts.account_id）',
                 material_id BIGINT DEFAULT NULL COMMENT '回填：素材库 ID（xy_product_materials）',
@@ -2036,6 +2037,8 @@ class DatabaseInitializer:
             ("platform_channel_category_name", "VARCHAR(100) DEFAULT NULL COMMENT '渠道类目名称'", "cover_image"),
             ("platform_category_path", "JSON DEFAULT NULL COMMENT '类目路径（闲鱼返回）'", "cover_image"),
             ("platform_attributes", "JSON DEFAULT NULL COMMENT '平台属性标签（闲鱼返回）'", "cover_image"),
+            # CUSTOM: 发布选项覆盖项（一键上架弹窗编辑，与素材库字段对齐，空走默认行为）
+            ("publish_options", "JSON DEFAULT NULL COMMENT '发布选项覆盖项（成色/运费/所在地/数量/多图/视频/规格等）'", "platform_attributes"),
         ],
         "xy_keyword_rules": [
             ("location_name", "VARCHAR(255) DEFAULT NULL COMMENT '站外联系方式定位名称'", "image_url"),

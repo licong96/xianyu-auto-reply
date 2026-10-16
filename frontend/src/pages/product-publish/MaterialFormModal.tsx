@@ -29,7 +29,7 @@ interface Props {
   onSaved: () => void
 }
 
-const createInternalSpecifications = (specifications: PublishSpecification[] = []): ProductSpecification[] => specifications.map((spec, specIndex) => ({
+export const createInternalSpecifications = (specifications: PublishSpecification[] = []): ProductSpecification[] => specifications.map((spec, specIndex) => ({
   id: `spec-${specIndex}-${Date.now()}`,
   name: spec.name,
   supportImage: Boolean(spec.support_image),
@@ -40,7 +40,7 @@ const createInternalSpecifications = (specifications: PublishSpecification[] = [
   })),
 }))
 
-const createInternalSkuRows = (rows: PublishSkuRow[] = [], specifications: ProductSpecification[] = []): SkuRow[] => rows.map((row) => ({
+export const createInternalSkuRows = (rows: PublishSkuRow[] = [], specifications: ProductSpecification[] = []): SkuRow[] => rows.map((row) => ({
   key: buildSkuKey(specifications, row.specs || {}),
   specs: row.specs || {},
   price: String(row.price ?? ''),
