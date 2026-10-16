@@ -248,3 +248,63 @@ class TestPanEntriesRoute:
         })
         assert res.success is True
         assert res.data["list"] == []
+
+
+# ==================== 网盘根目录（PAN_ROOT_DIR） ====================
+
+class TestPanRootDir:
+    def test_default_root_is_xianyu(self, monkeypatch):
+        monkeypatch.delenv("PAN_ROOT_DIR", raising=False)
+        assert pan_browser._pan_root_dir() == "/闲鱼"
+
+    def test_root_env_override_and_normalize(self, monkeypatch):
+        monkeypatch.setenv("PAN_ROOT_DIR", "资料池/")   # 自动补前导 /、去尾 /
+        assert pan_browser._pan_root_dir() == "/资料池"
+        monkeypatch.setenv("PAN_ROOT_DIR", "/")
+        assert pan_browser._pan_root_dir() == "/"
+
+    def test_resolve_root_alias_and_clamp(self):
+        root = "/闲鱼"
+        assert pan_browser._resolve_pan_path("", root) == root
+        assert pan_browser._resolve_pan_path("/", root) == root
+        assert pan_browser._resolve_pan_path("/闲鱼", root) == "/闲鱼"
+        assert pan_browser._resolve_pan_path("/闲鱼/资料池", root) == "/闲鱼/资料池"
+        # 越出根目录的路径收拢回根
+        assert pan_browser._resolve_pan_path("/资料池", root) == root
+        assert pan_browser._resolve_pan_path("/闲鱼/../资料池", root) == root
+        # 同名前缀防误伤：/闲鱼资料 不在 /闲鱼 之内
+        assert pan_browser._resolve_pan_path("/闲鱼资料/x", root) == root
+
+    def test_resolve_with_root_slash(self):
+        # 根为 / 时退化为纯规范化，兼容旧行为
+        assert pan_browser._resolve_pan_path("/", "/") == "/"
+        assert pan_browser._resolve_pan_path("/资料池", "/") == "/资料池"
+        assert pan_browser._resolve_pan_path("/a/../资料池", "/") == "/资料池"
+
+    def test_entries_defaults_to_root_and_returns_it(self, monkeypatch):
+        monkeypatch.setenv("PAN_ROOT_DIR", "/闲鱼")
+        seen: list[str] = []
+
+        class _RecordingPan:
+            def list_entries(self, remote: str = "/"):
+                seen.append(remote)
+                return [_QUARK_ENTRY]
+
+        res = _run_entries(monkeypatch, {"quark": _RecordingPan()}, path="/")
+        assert res.success is True
+        assert seen == ["/闲鱼"]            # 「/」别名解析为根目录后查询
+        assert res.data["root"] == "/闲鱼"   # 响应带 root 供前端做面包屑起点
+
+    def test_entries_clamps_out_of_root_path(self, monkeypatch):
+        monkeypatch.setenv("PAN_ROOT_DIR", "/闲鱼")
+        seen: list[str] = []
+
+        class _RecordingPan:
+            def list_entries(self, remote: str = "/"):
+                seen.append(remote)
+                return [_QUARK_ENTRY]
+
+        res = _run_entries(monkeypatch, {"quark": _RecordingPan()}, path="/资料池")
+        assert res.success is True
+        assert seen == ["/闲鱼"]
+        assert res.data["path"] == "/闲鱼"

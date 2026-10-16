@@ -174,6 +174,8 @@ export function PanBrowser() {
   const [entries, setEntries] = useState<PanEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [initialized, setInitialized] = useState(false)
+  /** 网盘根目录（后端 PAN_ROOT_DIR，默认 /闲鱼）；响应返回前按 "/" 处理 */
+  const [rootDir, setRootDir] = useState('/')
 
   // 弹窗状态
   const [shareEntry, setShareEntry] = useState<PanEntry | null>(null)
@@ -188,17 +190,26 @@ export function PanBrowser() {
     [setSearchParams]
   )
 
-  // 面包屑分段：/资料池/学军中学 → [网盘, 资料池, 学军中学]
+  // 面包屑：以网盘根目录（PAN_ROOT_DIR，如 /闲鱼）为起点，URL 里的 "/" 是它的别名；
+  // 根目录名取自后端返回值，资料池等其它模块仍使用绝对路径
+  const rootLabel = useMemo(
+    () => (rootDir === '/' ? '网盘' : rootDir.split('/').filter(Boolean).pop() || '网盘'),
+    [rootDir]
+  )
+
   const breadcrumbs = useMemo(() => {
-    const parts = currentPath.split('/').filter(Boolean)
-    const items = [{ label: '网盘', path: '/' }]
-    let acc = ''
+    const items = [{ label: rootLabel, path: '/' }]
+    const underRoot =
+      rootDir !== '/' && (currentPath === rootDir || currentPath.startsWith(rootDir + '/'))
+    const relative = underRoot ? currentPath.slice(rootDir.length) : currentPath
+    const parts = relative.split('/').filter(Boolean)
+    let acc = underRoot ? rootDir : ''
     for (const part of parts) {
       acc += `/${part}`
       items.push({ label: part, path: acc })
     }
     return items
-  }, [currentPath])
+  }, [currentPath, rootDir, rootLabel])
 
   const loadStatus = useCallback(async () => {
     try {
@@ -223,6 +234,7 @@ export function PanBrowser() {
         if (res.success && res.data) {
           setEntries(res.data.list)
           setDrives(res.data.drives || [])
+          if (res.data.root) setRootDir(res.data.root)
           setConnChecked(true)
         } else {
           setEntries([])
@@ -297,7 +309,11 @@ export function PanBrowser() {
     return <PageLoading />
   }
 
-  const parentPath = currentPath === '/' ? null : currentPath.slice(0, currentPath.lastIndexOf('/')) || '/'
+  // 「..」只在根目录以内出现：根别名 "/" 与根目录本身都不显示返回行
+  const parentPath =
+    currentPath === '/' || currentPath === rootDir
+      ? null
+      : currentPath.slice(0, currentPath.lastIndexOf('/')) || '/'
   const failedDrives = drives.filter((d) => !d.ok)
   const okDrives = drives.filter((d) => d.ok)
 

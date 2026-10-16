@@ -58,6 +58,42 @@ SOURCE_TYPE_PAN_MANUAL = "pan-manual"
 router = APIRouter(prefix="/pan", tags=["网盘"])
 
 
+def _pan_root_dir() -> str:
+    """网盘管理的根目录（默认 /闲鱼）。
+
+    网盘管理页默认进入该目录；「/」作为它的别名，越出该目录的路径会被收拢回来。
+    配置走环境变量 PAN_ROOT_DIR；资料池里的绝对路径不受影响。
+    """
+    raw = os.environ.get("PAN_ROOT_DIR", "/闲鱼").strip()
+    if not raw.startswith("/"):
+        raw = "/" + raw
+    return raw.rstrip("/") or "/"
+
+
+def _resolve_pan_path(path: str, root: str) -> str:
+    """把请求路径收拢到根目录内。
+
+    - 空串 / "/" 视为根目录别名
+    - 规范化 . 与 ..（.. 不越出根目录之上）
+    - 解析后不在根目录之下的路径一律回退到根目录
+    """
+    parts: List[str] = []
+    for seg in (path or "").split("/"):
+        if not seg or seg == ".":
+            continue
+        if seg == "..":
+            if parts:
+                parts.pop()
+            continue
+        parts.append(seg)
+    resolved = "/" + "/".join(parts)
+    if resolved == "/":
+        return root
+    if root != "/" and resolved != root and not resolved.startswith(root + "/"):
+        return root
+    return resolved
+
+
 def _share_days() -> int:
     return int(os.environ.get("KUAKE_SHARE_DAYS", "30"))
 
@@ -181,7 +217,13 @@ async def pan_entries(
     current_user: User = Depends(get_current_active_user),
     session: AsyncSession = Depends(get_db_session),
 ) -> Dict[str, Any]:
-    """并列列出各盘该路径并内存合并；某盘整层失败标 drives，不当作「没有文件」。"""
+    """并列列出各盘该路径并内存合并；某盘整层失败标 drives，不当作「没有文件」。
+
+    path 传 "/" 或越出根目录（PAN_ROOT_DIR，默认 /闲鱼）时收拢到根目录，
+    响应里带 root 供前端把根目录显示为面包屑起点。
+    """
+    root = _pan_root_dir()
+    path = _resolve_pan_path(path, root)
 
     async def _list(pan_type: str) -> Dict[str, Any]:
         try:
@@ -228,7 +270,7 @@ async def pan_entries(
         for loc in row["locations"]:
             loc["pool"] = status_map.get(f"{loc['pan_type']}://{loc['path']}") or None
 
-    return ApiResponse(success=True, message="ok", data={"path": path, "drives": drives, "list": merged})
+    return ApiResponse(success=True, message="ok", data={"path": path, "root": root, "drives": drives, "list": merged})
 
 
 # ---------- 分享 ----------
