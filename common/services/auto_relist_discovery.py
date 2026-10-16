@@ -62,7 +62,9 @@ class AutoRelistDiscoveryMixin:
                     or_(
                         and_(
                             XYOrder.status.in_(["shipped", "completed"]),
-                            XYOrder.delivery_method == "auto",
+                            # auto=即时自动发货；scheduled=定时补发货——两者都是真实履约，
+                            # 卡券内容已送达买家，均应触发续售
+                            XYOrder.delivery_method.in_(["auto", "scheduled"]),
                             XYOrder.delivery_content.is_not(None),
                             XYOrder.delivery_content != "",
                             ~XYOrder.delivery_content.op("regexp")(r"^[[:space:]]*$"),

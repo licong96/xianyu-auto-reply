@@ -69,7 +69,8 @@ def order_still_eligible(order: Any) -> bool:
     has_content = bool(str(order.delivery_content or "").strip())
     normal_delivery = (
         order.status in {"shipped", "completed"}
-        and order.delivery_method == "auto"
+        # 与发现侧保持一致：定时补发货（scheduled）同样视为真实履约
+        and order.delivery_method in {"auto", "scheduled"}
         and has_content
     )
     card_only_delivery = (
