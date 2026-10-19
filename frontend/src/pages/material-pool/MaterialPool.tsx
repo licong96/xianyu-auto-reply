@@ -946,13 +946,16 @@ function EditModal({
             <input type="number" min="0" step="0.01" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} className="input-ios w-full" />
           </div>
           <div>
-            <label className="input-label">封面图（上架必填）</label>
+            <label className="input-label">封面图（可选）</label>
             <div className="flex items-center gap-2">
               <label className="btn-ios-secondary cursor-pointer inline-flex items-center gap-1">
                 {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />}
                 {uploading ? '上传中...' : coverImage ? '重新上传' : '上传封面'}
                 <input type="file" accept="image/*" className="hidden" onChange={(e) => handleUploadCover(e.target.files?.[0])} />
               </label>
+              {!coverImage && (
+                <span className="text-xs text-slate-400">不上传也能上架，直接在一键上架弹窗传商品图片即可</span>
+              )}
             </div>
           </div>
         </div>

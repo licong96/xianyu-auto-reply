@@ -469,10 +469,7 @@ class MaterialPoolService:
         try:
             if row.status not in LISTABLE_STATUSES:
                 raise MaterialPoolError(f"当前状态（{row.status}）不允许上架，需先审核通过")
-            if not row.pan_url:
-                raise MaterialPoolError("缺少网盘分享链接，请先上传网盘")
-            if row.price is None:
-                raise MaterialPoolError("缺少售价，请先编辑售价或审核时填写")
+
 
             account = (
                 await self.session.execute(
@@ -485,7 +482,8 @@ class MaterialPoolService:
             if not account:
                 raise MaterialPoolError("选择的闲鱼账号不存在或无权使用")
 
-            # 持久化本次选择的类目（重试时复用）
+            # 先持久化本次选择的类目与发布选项（含用户上传的商品图片），再做各项前置校验：
+            # 上传网盘/售价/图片等校验失败时，已上传的图片不会丢，重试时弹窗可完整回显
             if category_data:
                 row.platform_category_id = category_data.get("platform_category_id") or None
                 row.platform_category_name = category_data.get("platform_category_name") or None
@@ -509,6 +507,23 @@ class MaterialPoolService:
             if effective_options.get("price") is not None:
                 row.price = float(effective_options["price"])
 
+            # 图片规则：一键上架传了商品图片就不再强制要求封面图；有图无封面时回填封面，
+            # 保证资料池列表/编辑页有图可展示；两者皆无才视为缺图报错
+            option_images: List[str] = [
+                str(i).strip() for i in (effective_options.get("images") or []) if str(i).strip()
+            ]
+            if option_images and not row.cover_image:
+                row.cover_image = option_images[0]
+
+            if not row.pan_url:
+                raise MaterialPoolError("缺少网盘分享链接，请先上传网盘")
+            if row.price is None:
+                raise MaterialPoolError("缺少售价，请先编辑售价或审核时填写")
+            if not option_images and not row.cover_image:
+                raise MaterialPoolError(
+                    "缺少商品图片：请在一键上架弹窗上传商品图片，或在编辑资料中上传封面图"
+                )
+
             platform_category_id = row.platform_category_id
             platform_category_name = row.platform_category_name
             platform_channel_category_id = row.platform_channel_category_id
@@ -530,10 +545,10 @@ class MaterialPoolService:
             platform_category_path = row.platform_category_path or []
 
             # merge 后的发布选项（素材库字段全集，空则等同历史默认行为）
-            # 图片优先用弹窗里上传的多图；未传图时回退到资料行封面图（首图兜底）
-            option_images = effective_options.get("images") or ([cover_image] if cover_image else [])
-            if not option_images:
-                raise MaterialPoolError("缺少商品图片，请在一键上架弹窗中添加图片（或在编辑资料中上传封面图）")
+            # 图片优先用弹窗里上传的多图；未传图时回退到资料行封面图（首图兜底）。
+            # option_images 在前面校验段已计算并做缺图校验，此处仅在选项无图时回退封面
+            if not option_images and cover_image:
+                option_images = [cover_image]
             option_videos = effective_options.get("videos") or []
             option_specifications = effective_options.get("specifications") or []
             option_sku_rows = effective_options.get("sku_rows") or []
@@ -601,6 +616,15 @@ class MaterialPoolService:
                 )
                 await self.session.commit()
                 logger.info(f"[material-pool] 素材已创建：pool={pool_id} material={material_id}")
+            elif publish_options and publish_options.get("images"):
+                # 重试上架且本次明确传了商品图片：同步进已存在的素材，
+                # 保证素材库内容与本次一键上架传递的图片一致
+                mat_svc = ProductMaterialService(self.session)
+                await mat_svc.update(material_id, user.id, {"images": option_images})
+                logger.info(
+                    f"[material-pool] 素材图片已同步：pool={pool_id} "
+                    f"material={material_id} images={len(option_images)}"
+                )
 
             # 2) 发布（幂等：已发布过且有 item_id 则跳过）
             if not item_id:
