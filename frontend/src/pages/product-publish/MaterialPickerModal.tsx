@@ -7,6 +7,7 @@ import { ChevronLeft, ChevronRight, Eye, Image, Loader2, Upload, X } from 'lucid
 import { getMaterial, getMaterials, type ProductMaterial } from '@/api/productPublish'
 import { useUIStore } from '@/store/uiStore'
 import { toPreviewUrl } from '@/utils/staticUrl'
+import { ImageUploaderGrid } from '@/components/common/ImageUploaderGrid'
 
 interface MaterialPickerModalProps {
   onSelect: (material: ProductMaterial) => void
@@ -46,15 +47,13 @@ function MaterialDetailModal({ material, onClose }: { material: ProductMaterial;
         <div className="modal-body overflow-y-auto space-y-6">
           <section className="space-y-3">
             <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">图片与视频</h3>
-            <div className="flex flex-wrap gap-2">
-              {(material.images || []).map((url, index) => (
-                <div key={`${url}-${index}`} className="relative h-24 w-24 overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">
-                  <img src={toPreviewUrl(url)} alt={`${material.title} 图片 ${index + 1}`} className="h-full w-full object-cover" />
-                  {index === 0 && <span className="absolute inset-x-0 bottom-0 bg-black/60 py-0.5 text-center text-[10px] text-white">首图</span>}
-                </div>
-              ))}
-              {(material.images || []).length === 0 && <span className="text-sm text-slate-400">暂无图片</span>}
-            </div>
+            <ImageUploaderGrid
+              images={material.images || []}
+              toUrl={toPreviewUrl}
+              readonly
+              itemClassName="h-24 w-24"
+              emptyText="暂无图片"
+            />
             {(material.videos || []).map((video, index) => (
               <video key={`${video.url}-${index}`} className="w-full max-w-xl rounded-lg bg-black" controls preload="metadata" src={toPreviewUrl(video.url)}>
                 当前浏览器不支持视频播放

@@ -2,12 +2,13 @@
  * 单品发布页面。
  * 负责账号、素材导入、图片上传和提交；详细字段由 ProductPublishForm 负责。
  */
-import React, { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import { CheckCircle, ExternalLink, FolderOpen, Loader2, RefreshCw, Send, Trash2, Upload, XCircle } from 'lucide-react'
+import { CheckCircle, ExternalLink, FolderOpen, Loader2, RefreshCw, Send, XCircle } from 'lucide-react'
 import { getAccountDetails } from '@/api/accounts'
 import { getPublishAccountCapability, publishSingle, type MaterialVideo, type ProductMaterial, type PublishAccountCapability, uploadProductImages, uploadProductVideos } from '@/api/productPublish'
 import { PageLoading } from '@/components/common/Loading'
+import { ImageUploaderGrid } from '@/components/common/ImageUploaderGrid'
 import { useUIStore } from '@/store/uiStore'
 import { getApiErrorMessage } from '@/utils/apiError'
 import { toPreviewUrl } from '@/utils/staticUrl'
@@ -40,7 +41,6 @@ function materialSpecifications(material: ProductMaterial): { specifications: Pr
 
 export function ProductPublish() {
   const { addToast } = useUIStore()
-  const fileInputRef = useRef<HTMLInputElement>(null)
   const capabilityRequestRef = useRef(0)
   const [accounts, setAccounts] = useState<any[]>([])
   const [loadingAccounts, setLoadingAccounts] = useState(true)
@@ -125,15 +125,20 @@ export function ProductPublish() {
     return response.data
   }
 
-  const handleImageChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files || [])
+  const handleImageChange = async (files: File[]) => {
     if (!files.length) return
     if (imagePaths.length + files.length > 9) { addToast({ type: 'warning', message: '最多上传9张图片' }); return }
     setUploading(true)
     try {
       const data = await uploadFiles(files)
       if (data) { setImagePaths((current) => [...current, ...data.paths]); setImagePreviews((current) => [...current, ...data.urls]); addToast({ type: 'success', message: `成功上传 ${data.paths.length} 张图片` }) }
-    } catch { addToast({ type: 'error', message: '图片上传失败，请重试' }) } finally { setUploading(false); if (fileInputRef.current) fileInputRef.current.value = '' }
+    } catch { addToast({ type: 'error', message: '图片上传失败，请重试' }) } finally { setUploading(false) }
+  }
+
+  // 图片网格统一以 imagePaths（发布路径）为顺序权威，重排/删除后同步重建预览数组
+  const handleImagesChange = (next: string[]) => {
+    setImagePaths(next)
+    setImagePreviews(next.map(toPreviewUrl))
   }
 
   const handleSpecUpload = async (file: File) => {
@@ -227,7 +232,7 @@ export function ProductPublish() {
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="xl:col-span-2"><ProductPublishForm form={form} setForm={setForm} accounts={accounts} onUploadSpecImage={handleSpecUpload} categoryLocked={categoryLocked} onCategoryEdit={() => setCategoryLocked(false)} accountCapability={accountCapability} capabilityLoading={capabilityLoading} /></motion.div>
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }} className="space-y-4">
-          <div className="vben-card"><div className="vben-card-header"><h2 className="vben-card-title">{supportsVideo ? '宝贝图片与视频' : '宝贝图片'} <span className="text-red-500 ml-1">*</span></h2><span className="text-xs text-slate-400">{imagePreviews.length}/9 图{supportsVideo ? ` · ${form.videos.length}/3 视频` : ''}</span></div><div className="vben-card-body"><div className="flex flex-wrap gap-2">{imagePreviews.map((url, index) => <div key={`${url}-${index}`} className="relative w-20 h-20 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-600 group"><img src={toPreviewUrl(url)} alt="" className="w-full h-full object-cover" />{index === 0 && <span className="absolute bottom-0 left-0 right-0 bg-blue-500/80 text-white text-[10px] text-center py-0.5">首图</span>}<button type="button" title="移除图片" onClick={() => { setImagePaths((current) => current.filter((_, itemIndex) => itemIndex !== index)); setImagePreviews((current) => current.filter((_, itemIndex) => itemIndex !== index)) }} className="absolute top-0.5 right-0.5 bg-black/60 hover:bg-red-500 text-white rounded p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 className="w-3 h-3" /></button></div>)}{imagePreviews.length < 9 && <button type="button" onClick={() => fileInputRef.current?.click()} disabled={uploading} className="w-20 h-20 border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-lg flex flex-col items-center justify-center text-slate-400 hover:border-blue-400 hover:text-blue-500 transition-colors disabled:opacity-50">{uploading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Upload className="w-5 h-5" />}<span className="text-xs mt-1">{uploading ? '上传中' : '添加首图'}</span></button>}</div><input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleImageChange} disabled={uploading} />{supportsVideo && <ProductVideoUploader videos={form.videos} onUploadVideo={handleVideoUpload} onChange={(videos) => setForm((current) => ({ ...current, videos }))} />}</div></div>
+          <div className="vben-card"><div className="vben-card-header"><h2 className="vben-card-title">{supportsVideo ? '宝贝图片与视频' : '宝贝图片'} <span className="text-red-500 ml-1">*</span></h2><span className="text-xs text-slate-400">{imagePreviews.length}/9 图{supportsVideo ? ` · ${form.videos.length}/3 视频` : ''}</span></div><div className="vben-card-body"><ImageUploaderGrid images={imagePaths} toUrl={toPreviewUrl} onChange={handleImagesChange} onUploadFiles={handleImageChange} uploading={uploading} maxCount={9} />{supportsVideo && <ProductVideoUploader videos={form.videos} onUploadVideo={handleVideoUpload} onChange={(videos) => setForm((current) => ({ ...current, videos }))} />}</div></div>
           <div className="vben-card"><div className="vben-card-body space-y-3">{capabilityError && !capabilityLoading && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300"><p>{capabilityError}</p><button type="button" className="btn-ios-secondary mt-2 w-full" onClick={() => setCapabilityRetryToken((current) => current + 1)}><RefreshCw className="w-4 h-4" />重新检测账号能力</button></div>}{!capabilityError && !capabilityLoading && !accountCapability && <p className="text-sm text-amber-600 dark:text-amber-400">{accounts.length === 0 ? '当前没有可用的闲鱼账号，请先到「账号管理」添加账号后再发布' : '请先在左侧选择发布账号，选定后会自动检测该账号的发布能力'}</p>}<button className="btn-ios-primary w-full" disabled={submitting || uploading || capabilityLoading || !accountCapability} onClick={handlePublish}>{submitting ? <><Loader2 className="w-4 h-4 animate-spin" />正在调用闲鱼接口...</> : capabilityLoading ? <><Loader2 className="w-4 h-4 animate-spin" />检测账号能力...</> : <><Send className="w-4 h-4" />立即发布</>}</button>{submitting && <p className="text-xs text-slate-400 text-center">接口发布中，请勿重复提交</p>}</div></div>
           {result && <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className={`vben-card border-l-4 ${result.success ? 'border-l-green-500' : 'border-l-red-500'}`}><div className="vben-card-body"><div className="flex items-start gap-3">{result.success ? <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" /> : <XCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />}<div className="flex-1"><p className={`font-medium ${result.success ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'}`}>{result.message}</p>{result.item_url && <a href={result.item_url} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-500 hover:underline flex items-center gap-1 mt-1"><ExternalLink className="w-3 h-3" />查看商品</a>}{(result.sync_status === 'success' || result.sync_status === 'failed') && <p className="text-xs mt-2 text-slate-500 dark:text-slate-300">{result.sync_status === 'success' ? `已自动获取 ${result.sync_total_count || 0} 个商品，入库 ${result.sync_saved_count || 0} 个商品` : result.sync_message}</p>}</div></div></div></motion.div>}
         </motion.div>

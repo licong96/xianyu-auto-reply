@@ -4,7 +4,7 @@
  * 平台类目默认锁定，可点「重新选择分类」解锁；类目属性（成色/品牌等）可直接修改。
  */
 import React, { useEffect, useRef, useState } from 'react'
-import { Loader2, Trash2, Upload, X } from 'lucide-react'
+import { Loader2, X } from 'lucide-react'
 import { useUIStore } from '@/store/uiStore'
 import {
   getSellerItemEditDetail,
@@ -17,6 +17,7 @@ import { getApiErrorMessage } from '@/utils/apiError'
 import { toPreviewUrl } from '@/utils/staticUrl'
 import ProductPublishForm from '@/pages/product-publish/ProductPublishForm'
 import ProductVideoUploader from '@/pages/product-publish/ProductVideoUploader'
+import { ImageUploaderGrid } from '@/components/common/ImageUploaderGrid'
 import {
   buildSkuKey,
   findDuplicateSpecificationValue,
@@ -168,7 +169,6 @@ const toEditPayload = (form: SellerEditFormState): SellerItemEditPayload => {
 
 export function SellerItemEditModal({ cookieId, itemId, itemTitle, onClose, onSaved }: Props) {
   const { addToast } = useUIStore()
-  const fileInputRef = useRef<HTMLInputElement>(null)
   // 平台原始发货设置：未改动时后端会原样复用平台快照（运费模板/一口价也能保住），
   // 一旦改动则只支持抓包已确认的包邮/无需邮寄，需要在提交前拦下来给出中文提示
   const initialShippingRef = useRef<{ method: string; postage: number } | null>(null)
@@ -217,8 +217,7 @@ export function SellerItemEditModal({ cookieId, itemId, itemTitle, onClose, onSa
     })
   }
 
-  const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files || [])
+  const handleUpload = async (files: File[]) => {
     if (!files.length) return
     if (form.images.length + files.length > 9) {
       addToast({ type: 'warning', message: '最多上传9张图片' })
@@ -231,7 +230,6 @@ export function SellerItemEditModal({ cookieId, itemId, itemTitle, onClose, onSa
       data: undefined,
     }))
     setUploading(false)
-    if (fileInputRef.current) fileInputRef.current.value = ''
     if (!response.success || !response.data) {
       addToast({ type: 'error', message: response.message || '图片上传失败' })
       return
@@ -358,34 +356,14 @@ export function SellerItemEditModal({ cookieId, itemId, itemTitle, onClose, onSa
                   <span className="text-xs text-slate-400">{form.images.length}/9 图 · {form.videos.length}/3 视频</span>
                 </div>
                 <div className="vben-card-body">
-                  <div className="flex flex-wrap gap-2">
-                    {form.images.map((url, index) => (
-                      <div key={`${url}-${index}`} className="relative h-20 w-20 overflow-hidden rounded-lg border border-slate-200 dark:border-slate-600 group">
-                        <img src={toPreviewUrl(url)} alt="" className="h-full w-full object-cover" />
-                        {index === 0 && <span className="absolute bottom-0 left-0 right-0 bg-blue-500/80 py-0.5 text-center text-[10px] text-white">首图</span>}
-                        <button
-                          type="button"
-                          title="移除图片"
-                          onClick={() => setForm((current) => ({ ...current, images: current.images.filter((_, itemIndex) => itemIndex !== index) }))}
-                          className="absolute right-0.5 top-0.5 rounded bg-black/60 p-0.5 text-white opacity-0 transition-opacity group-hover:opacity-100 hover:bg-red-500"
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </button>
-                      </div>
-                    ))}
-                    {form.images.length < 9 && (
-                      <button
-                        type="button"
-                        onClick={() => fileInputRef.current?.click()}
-                        disabled={uploading}
-                        className="flex h-20 w-20 flex-col items-center justify-center rounded-lg border-2 border-dashed border-slate-300 text-slate-400 transition-colors hover:border-blue-400 hover:text-blue-500 disabled:opacity-50 dark:border-slate-600"
-                      >
-                        {uploading ? <Loader2 className="h-5 w-5 animate-spin" /> : <Upload className="h-5 w-5" />}
-                        <span className="mt-1 text-xs">{uploading ? '上传中' : '添加图片'}</span>
-                      </button>
-                    )}
-                  </div>
-                  <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleUpload} />
+                  <ImageUploaderGrid
+                    images={form.images}
+                    toUrl={toPreviewUrl}
+                    onChange={(images) => setForm((current) => ({ ...current, images }))}
+                    onUploadFiles={handleUpload}
+                    uploading={uploading}
+                    maxCount={9}
+                  />
                   <ProductVideoUploader
                     videos={form.videos}
                     onUploadVideo={handleVideoUpload}

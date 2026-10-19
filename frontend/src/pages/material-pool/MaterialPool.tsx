@@ -9,7 +9,7 @@
  * 5. 触发上传夸克网盘
  * 6. 一键上架（选择闲鱼账号：建素材->发布->卡券->续售规则）
  */
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   BookOpen,
@@ -25,8 +25,6 @@ import {
   RefreshCw,
   Rocket,
   Search,
-  Trash2,
-  Upload,
   UploadCloud,
   X,
   XCircle,
@@ -67,6 +65,7 @@ import { findDuplicateSpecificationValue, type PublishForm, type ShippingMethod 
 import { ConfirmModal } from '@/components/common/ConfirmModal'
 import { Select } from '@/components/common/Select'
 import { PageLoading } from '@/components/common/Loading'
+import { ImageUploaderGrid } from '@/components/common/ImageUploaderGrid'
 import { useUIStore } from '@/store/uiStore'
 import { getApiErrorMessage } from '@/utils/request'
 import type { AccountDetail } from '@/types'
@@ -1138,7 +1137,6 @@ function ListModal({
   const [form, setForm] = useState<PublishForm>(() => buildEmptyCategoryForm('', '', ''))
   const [categoryLocked, setCategoryLocked] = useState(false)
   const [images, setImages] = useState<string[]>([])
-  const fileInputRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
   const [capability, setCapability] = useState<PublishAccountCapability | null>(null)
   const [capabilityLoading, setCapabilityLoading] = useState(false)
@@ -1257,8 +1255,7 @@ function ListModal({
     ? (patch: Partial<PublishForm>) => setCatForm((current) => ({ ...current, ...patch }))
     : (patch: Partial<PublishForm>) => setForm((current) => ({ ...current, ...patch }))
 
-  const handleUploadImages = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files || [])
+  const handleUploadImages = async (files: File[]) => {
     if (!files.length) return
     if (images.length + files.length > 9) {
       addToast({ type: 'warning', message: '最多上传9张图片' })
@@ -1277,7 +1274,6 @@ function ListModal({
       addToast({ type: 'error', message: getApiErrorMessage(error, '图片上传失败') })
     } finally {
       setUploading(false)
-      if (fileInputRef.current) fileInputRef.current.value = ''
     }
   }
 
@@ -1575,34 +1571,14 @@ function ListModal({
             <span className="text-xs text-slate-400">{images.length}/9 图 · {form.videos.length}/3 视频</span>
           </div>
           <div className="vben-card-body">
-            <div className="flex flex-wrap gap-2">
-              {images.map((url, index) => (
-                <div key={`${url}-${index}`} className="relative h-20 w-20 overflow-hidden rounded-lg border border-slate-200 dark:border-slate-600 group">
-                  <img src={coverImageToUrl(url)} alt="" className="h-full w-full object-cover" />
-                  {index === 0 && <span className="absolute bottom-0 left-0 right-0 bg-blue-500/80 py-0.5 text-center text-[10px] text-white">首图</span>}
-                  <button
-                    type="button"
-                    title="移除图片"
-                    onClick={() => setImages((current) => current.filter((_, itemIndex) => itemIndex !== index))}
-                    className="absolute right-0.5 top-0.5 rounded bg-black/60 p-0.5 text-white opacity-0 transition-opacity group-hover:opacity-100 hover:bg-red-500"
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </button>
-                </div>
-              ))}
-              {images.length < 9 && (
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={uploading}
-                  className="flex h-20 w-20 flex-col items-center justify-center rounded-lg border-2 border-dashed border-slate-300 text-slate-400 transition-colors hover:border-blue-400 hover:text-blue-500 disabled:opacity-50 dark:border-slate-600"
-                >
-                  {uploading ? <Loader2 className="h-5 w-5 animate-spin" /> : <Upload className="h-5 w-5" />}
-                  <span className="mt-1 text-xs">{uploading ? '上传中' : '添加图片'}</span>
-                </button>
-              )}
-            </div>
-            <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleUploadImages} />
+            <ImageUploaderGrid
+              images={images}
+              toUrl={coverImageToUrl}
+              onChange={setImages}
+              onUploadFiles={handleUploadImages}
+              uploading={uploading}
+              maxCount={9}
+            />
             <ProductVideoUploader
               videos={form.videos}
               onUploadVideo={handleVideoUpload}

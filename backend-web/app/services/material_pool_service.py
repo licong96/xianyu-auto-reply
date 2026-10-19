@@ -473,8 +473,6 @@ class MaterialPoolService:
                 raise MaterialPoolError("缺少网盘分享链接，请先上传网盘")
             if row.price is None:
                 raise MaterialPoolError("缺少售价，请先编辑售价或审核时填写")
-            if not row.cover_image:
-                raise MaterialPoolError("缺少封面图，请先上传封面图（编辑资料可上传）")
 
             account = (
                 await self.session.execute(
@@ -532,7 +530,10 @@ class MaterialPoolService:
             platform_category_path = row.platform_category_path or []
 
             # merge 后的发布选项（素材库字段全集，空则等同历史默认行为）
-            option_images = effective_options.get("images") or [cover_image]
+            # 图片优先用弹窗里上传的多图；未传图时回退到资料行封面图（首图兜底）
+            option_images = effective_options.get("images") or ([cover_image] if cover_image else [])
+            if not option_images:
+                raise MaterialPoolError("缺少商品图片，请在一键上架弹窗中添加图片（或在编辑资料中上传封面图）")
             option_videos = effective_options.get("videos") or []
             option_specifications = effective_options.get("specifications") or []
             option_sku_rows = effective_options.get("sku_rows") or []
