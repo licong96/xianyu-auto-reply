@@ -88,3 +88,37 @@ export const importPanFile = async (data: {
 }): Promise<ApiResponse<MaterialPoolItem>> => {
   return post<ApiResponse<MaterialPoolItem>>(`${PREFIX}/import`, data)
 }
+
+/** 网盘互传任务 */
+export interface PanSyncTask {
+  task_id: string
+  src_type: string
+  dst_type: string
+  remote: string
+  is_dir: boolean
+  /** queued / running / done / failed */
+  status: string
+  total: number
+  processed: number
+  uploaded: number
+  skipped: number
+  failed: number
+  errors: string[]
+  current: string
+  created_at: number
+  finished_at: number | null
+}
+
+/** 启动同步：把源盘文件/文件夹同步到对端盘的相同路径（后台任务） */
+export const startPanSync = async (data: {
+  pan_type: string
+  path: string
+  is_dir: boolean
+}): Promise<ApiResponse<PanSyncTask>> => {
+  return post<ApiResponse<PanSyncTask>>(`${PREFIX}/sync`, data)
+}
+
+/** 查询同步任务进度 */
+export const getPanSyncStatus = async (taskId: string): Promise<ApiResponse<PanSyncTask>> => {
+  return get<ApiResponse<PanSyncTask>>(`${PREFIX}/sync-status/${taskId}`)
+}

@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import or_
 
 from app.api.deps import get_current_active_user, get_db_session
+from app.services.pan import pan_sync_service
 from app.services.material_pool_service import _row_to_dict
 from app.services.pan.base import (
     PanError,
@@ -315,6 +316,61 @@ async def pan_share(
     if ok_count == 0:
         return ApiResponse(success=False, message=f"所有网盘分享失败：{shares[0].get('error')}", data={"shares": shares})
     return ApiResponse(success=True, message=f"{ok_count}/{len(shares)} 个网盘分享成功", data={"shares": shares})
+
+
+# ---------- 网盘互传（同步到对端盘） ----------
+
+class PanSyncRequest(BaseModel):
+    pan_type: str = Field(..., min_length=1, max_length=20, description="源网盘类型：baidu/quark")
+    path: str = Field(..., min_length=1, max_length=1000, description="源盘上的完整路径")
+    is_dir: bool = Field(False, description="同步的是整个文件夹")
+
+
+@router.post("/sync", response_model=ApiResponse)
+async def pan_sync(
+    req: PanSyncRequest,
+    current_user: User = Depends(get_current_active_user),
+) -> Dict[str, Any]:
+    """把文件/文件夹从源盘同步到对端盘的相同路径（后台任务，进度走 /sync-status 查询）。"""
+    src_type = req.pan_type
+    dst_type = pan_sync_service.SYNC_PAIRS.get(src_type)
+    if not dst_type:
+        return ApiResponse(
+            success=False,
+            message=f"不支持的同步源网盘：{src_type}（支持：{'、'.join(pan_sync_service.SYNC_PAIRS)}）",
+            data=None,
+        )
+    enabled = enabled_pan_types()
+    for pan_type in (src_type, dst_type):
+        if pan_type not in enabled:
+            return ApiResponse(
+                success=False,
+                message=f"{pan_type} 网盘未启用（PAN_ENABLED_PANS={','.join(enabled)}）",
+                data=None,
+            )
+
+    path = _resolve_pan_path(req.path, _pan_root_dir())
+    try:
+        task = pan_sync_service.start_sync(src_type, path, req.is_dir)
+    except PanError as exc:
+        return ApiResponse(success=False, message=str(exc), data=None)
+    return ApiResponse(
+        success=True,
+        message=f"同步任务已启动：{src_type} → {dst_type}，完成后两个网盘路径一致",
+        data=task,
+    )
+
+
+@router.get("/sync-status/{task_id}", response_model=ApiResponse)
+async def pan_sync_status(
+    task_id: str,
+    current_user: User = Depends(get_current_active_user),
+) -> Dict[str, Any]:
+    """查询同步任务进度。status: queued / running / done / failed。"""
+    task = pan_sync_service.get_task(task_id)
+    if not task:
+        return ApiResponse(success=False, message="任务不存在或已被清理", data=None)
+    return ApiResponse(success=True, message="ok", data=task)
 
 
 # ---------- 导入资料池 ----------

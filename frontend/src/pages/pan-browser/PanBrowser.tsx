@@ -33,11 +33,14 @@ import {
   createPanShare,
   getPanEntries,
   getPanStatus,
+  getPanSyncStatus,
   importPanFile,
+  startPanSync,
   type PanDriveStatus,
   type PanEntry,
   type PanLocation,
   type PanShareItem,
+  type PanSyncTask,
 } from '@/api/panBrowser'
 import { PageLoading } from '@/components/common/Loading'
 import { useUIStore } from '@/store/uiStore'
@@ -79,6 +82,25 @@ function panLabel(panType: string) {
 /** 行的资料池状态：取第一个命中的 location */
 function entryPool(entry: PanEntry) {
   return entry.locations.find((l) => l.pool)?.pool || null
+}
+
+/** 互传方向对：与后端 pan_sync_service.SYNC_PAIRS 保持一致 */
+const SYNC_PAIRS: Record<string, string> = { baidu: 'quark', quark: 'baidu' }
+
+/** 该行缺哪个已连接的盘：返回 { srcType, dstType, srcPath } 或 null（两边都有/盘未连接不显示） */
+function syncActionFor(
+  entry: PanEntry,
+  drives: PanDriveStatus[]
+): { srcType: string; dstType: string; srcPath: string } | null {
+  const okTypes = drives.filter((d) => d.ok).map((d) => d.pan_type)
+  const present = new Set(entry.locations.map((l) => l.pan_type))
+  for (const src of okTypes) {
+    const dst = SYNC_PAIRS[src]
+    if (!dst || !present.has(src) || present.has(dst) || !okTypes.includes(dst)) continue
+    const loc = entry.locations.find((l) => l.pan_type === src)
+    if (loc) return { srcType: src, dstType: dst, srcPath: loc.path }
+  }
+  return null
 }
 
 /** 文件夹导航路径：两个盘结构一致，取第一个 location */
@@ -182,6 +204,9 @@ export function PanBrowser() {
   const [shareResults, setShareResults] = useState<PanShareItem[] | null>(null)
   const [sharing, setSharing] = useState(false)
   const [importEntry, setImportEntry] = useState<PanEntry | null>(null)
+
+  // 互传任务：entry key -> task（后台同步，轮询进度）
+  const [syncTasks, setSyncTasks] = useState<Record<string, PanSyncTask>>({})
 
   const navigateTo = useCallback(
     (path: string) => {
@@ -298,6 +323,72 @@ export function PanBrowser() {
     }
   }
 
+  /** 启动互传：把该条目从所在盘同步到对端盘的相同路径 */
+  const handleSync = async (entry: PanEntry) => {
+    const action = syncActionFor(entry, drives)
+    if (!action) return
+    const key = `${entry.file_name}:${entry.dir}`
+    try {
+      const res = await startPanSync({ pan_type: action.srcType, path: action.srcPath, is_dir: entry.dir })
+      if (res.success && res.data) {
+        setSyncTasks((prev) => ({ ...prev, [key]: res.data! }))
+        addToast({ type: 'success', message: `同步任务已启动：${panLabel(action.srcType)} → ${panLabel(action.dstType)}` })
+      } else {
+        addToast({ type: 'error', message: res.message || '同步任务启动失败' })
+      }
+    } catch (error) {
+      addToast({ type: 'error', message: getApiErrorMessage(error, '同步任务启动失败') })
+    }
+  }
+
+  // 轮询进行中的互传任务；完成/失败后刷新列表并清理任务标记
+  useEffect(() => {
+    const activeKeys = Object.keys(syncTasks).filter((k) =>
+      ['queued', 'running'].includes(syncTasks[k]?.status)
+    )
+    if (activeKeys.length === 0) return
+    const timer = setInterval(async () => {
+      for (const k of activeKeys) {
+        const task = syncTasks[k]
+        if (!task) continue
+        try {
+          const res = await getPanSyncStatus(task.task_id)
+          if (!res.success || !res.data) {
+            setSyncTasks((prev) => {
+              const next = { ...prev }
+              delete next[k]
+              return next
+            })
+            addToast({ type: 'error', message: res.message || '同步任务查询失败' })
+            continue
+          }
+          const t = res.data
+          if (t.status === 'done' || t.status === 'failed') {
+            setSyncTasks((prev) => {
+              const next = { ...prev }
+              delete next[k]
+              return next
+            })
+            if (t.status === 'done') {
+              addToast({
+                type: 'success',
+                message: `同步完成：上传 ${t.uploaded}，跳过 ${t.skipped}${t.failed ? `，失败 ${t.failed}` : ''}`,
+              })
+            } else {
+              addToast({ type: 'error', message: `同步失败：${t.errors[0] || '未知错误'}` })
+            }
+            loadEntries(currentPath)
+          } else {
+            setSyncTasks((prev) => ({ ...prev, [k]: t }))
+          }
+        } catch {
+          // 网络抖动：下一轮再查
+        }
+      }
+    }, 2000)
+    return () => clearInterval(timer)
+  }, [syncTasks, addToast, loadEntries, currentPath])
+
   const sortedEntries = useMemo(() => {
     return [...entries].sort((a, b) => {
       if (a.dir !== b.dir) return a.dir ? -1 : 1
@@ -322,7 +413,7 @@ export function PanBrowser() {
       <div className="page-header flex-between">
         <div>
           <h1 className="page-title">网盘管理</h1>
-          <p className="page-description">浏览多网盘（同层并列合并），创建分享链接，或把文件/文件夹一键入池（自动创建分享链接），上架信息统一在资料池维护</p>
+          <p className="page-description">浏览多网盘（同层并列合并），创建分享链接，把文件/文件夹一键入池（自动创建分享链接），缺盘的条目可一键同步到对端盘（路径保持一致），上架信息统一在资料池维护</p>
         </div>
         <button onClick={() => loadEntries(currentPath)} className="btn-ios-secondary" disabled={loading}>
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
@@ -468,6 +559,32 @@ export function PanBrowser() {
                         </td>
                         <td className="whitespace-nowrap">
                           <div className="flex items-center gap-1">
+                            {(() => {
+                              const key = `${entry.file_name}:${entry.dir}`
+                              const task = syncTasks[key]
+                              if (task && ['queued', 'running'].includes(task.status)) {
+                                return (
+                                  <button
+                                    disabled
+                                    className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs bg-purple-50 text-purple-500 dark:bg-purple-900/30 dark:text-purple-400"
+                                  >
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                    同步中 {task.processed}/{task.total || '…'}
+                                  </button>
+                                )
+                              }
+                              const action = syncActionFor(entry, drives)
+                              if (!action) return null
+                              return (
+                                <button
+                                  onClick={() => handleSync(entry)}
+                                  className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs bg-purple-50 text-purple-600 hover:bg-purple-100 dark:bg-purple-900/30 dark:text-purple-400"
+                                >
+                                  <RefreshCw className="w-3.5 h-3.5" />
+                                  同步到{panLabel(action.dstType)}
+                                </button>
+                              )
+                            })()}
                             <button
                               onClick={() => {
                                 setShareEntry(entry)

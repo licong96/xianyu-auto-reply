@@ -115,6 +115,18 @@ class QuarkPanClient:
             raise PanError(f"本地文件不存在：{local_path}")
         return self._run("upload", local_path, remote_path, timeout=timeout)
 
+    def download(self, remote_path: str, dest_local: str, timeout: int = 7200) -> str:
+        """下载文件到本地路径，返回本地文件路径。
+
+        kuake 的 download 走 OSS 回调鉴权，需要完整有效的 KUAKE_COOKIE；
+        cookie 失效时报「require login [auth expired]」，属环境配置问题而非代码问题。
+        """
+        dest_local = str(dest_local)
+        self._run("download", remote_path, dest_local, timeout=timeout)
+        if not Path(dest_local).is_file():
+            raise PanError(f"下载完成但本地文件不存在：{dest_local}")
+        return dest_local
+
     def share(self, remote_path: str, days: int = 30, passcode: bool = False) -> dict:
         """创建分享，返回 data（含分享链接字段，形状以实际输出为准）。"""
         return self._run("share", remote_path, str(days), "true" if passcode else "false")

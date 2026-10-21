@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -308,3 +309,198 @@ class TestPanRootDir:
         assert res.success is True
         assert seen == ["/闲鱼"]
         assert res.data["path"] == "/闲鱼"
+
+
+# ==================== 网盘互传（同步） ====================
+
+class TestBaiduSyncCommands:
+    """百度客户端 download/upload/delete 的输出解析（实测输出样本固化）。"""
+
+    def test_download_parses_saved_path(self, monkeypatch, tmp_path):
+        saved = tmp_path / "1157652378_榕树下的榕树2"
+        saved.mkdir(parents=True)
+        (saved / "多盘合并测试.txt").write_text("x")
+        out = (
+            "\n[1] ↓ 39B/39B 49B/s in 1s, left 0s ............\n"
+            f"[1] 下载完成, 保存位置: {saved / '多盘合并测试.txt'}\n"
+            "[1] 跳过文件有效性检验\n\n下载结束, 时间: 1.858s, 数据总量: 39B\n"
+        )
+        client = _make_baidu(monkeypatch, tmp_path, stdout=out)
+        assert client.download("/闲鱼/多盘合并测试.txt", str(tmp_path)) == str(
+            saved / "多盘合并测试.txt"
+        )
+
+    def test_download_without_saved_path_raises(self, monkeypatch, tmp_path):
+        client = _make_baidu(monkeypatch, tmp_path, stdout="下载结束, 时间: 1s")
+        with pytest.raises(PanError, match="保存位置"):
+            client.download("/a.txt", str(tmp_path))
+
+    def test_upload_parses_remote_path(self, monkeypatch, tmp_path):
+        local = tmp_path / "upload_test.txt"
+        local.write_text("hello")
+        out = "\n[1] 上传文件成功, 保存到网盘路径: /闲鱼/_synctest/upload_test.txt\n\n上传结束, 时间: 2.489s, 总大小: 16B\n"
+        client = _make_baidu(monkeypatch, tmp_path, stdout=out)
+        assert client.upload(str(local), "/闲鱼/_synctest") == "/闲鱼/_synctest/upload_test.txt"
+
+    def test_upload_missing_local_raises(self, monkeypatch, tmp_path):
+        client = _make_baidu(monkeypatch, tmp_path, stdout="")
+        with pytest.raises(PanError, match="本地文件不存在"):
+            client.upload(str(tmp_path / "nope.txt"), "/闲鱼")
+
+    def test_delete_ok_output(self, monkeypatch, tmp_path):
+        out = "操作成功, 以下文件/目录已删除, 可在网盘文件回收站找回: \n  #  文件/目录\n  0  /闲鱼/a.txt\n"
+        client = _make_baidu(monkeypatch, tmp_path, stdout=out)
+        client.delete("/闲鱼/a.txt")  # 不抛即通过
+
+    def test_ensure_dir_swallows_exists(self, monkeypatch, tmp_path):
+        # mkdir 对已存在目录报「遇到错误」时 ensure_dir 必须吞掉继续
+        calls: list[list[str]] = []
+
+        def _fake_run(cmd, **k):
+            calls.append(cmd)
+            if cmd[1] == "ls":
+                return SimpleNamespace(stdout="表头\n", stderr="")
+            return SimpleNamespace(stdout="遇到错误, 远端服务器返回错误, 代码: -10, 消息: 目录已存在", stderr="")
+
+        monkeypatch.setattr(subprocess, "run", _fake_run)
+        (tmp_path / "BaiduPCS-Go").write_text("")
+        monkeypatch.setenv("BAIDUPCS_BIN", str(tmp_path / "BaiduPCS-Go"))
+        client = BaiduPanClient()
+        client.ensure_dir("/闲鱼/资料池/2026")
+        mkdir_calls = [c for c in calls if c[1] == "mkdir"]
+        assert [c[2] for c in mkdir_calls] == ["/闲鱼", "/闲鱼/资料池", "/闲鱼/资料池/2026"]
+
+
+class TestSyncSizeMatch:
+    """同步查重的大小比对：小文件必须严格，大文件带 0.5% 容差（覆盖百度 ls 舍入误差）。"""
+
+    def test_exact_match(self):
+        assert _sync._sizes_match(1024, 1024) is True
+
+    def test_tiny_files_strict(self):
+        # 回归：24B 与 87B 绝不能被视为同一份（旧实现 1024B 下限曾导致错误跳过）
+        assert _sync._sizes_match(24, 87) is False
+        assert _sync._sizes_match(39, 40) is True  # 1B 差 = 人类可读舍入，视为同一份
+
+    def test_large_files_tolerance(self):
+        # 百度 ls 两位小数：24.26MB 舍入误差约 5KB，0.5% 容差足够覆盖
+        assert _sync._sizes_match(24 * 1024**2, 24 * 1024**2 + 50 * 1024) is True
+        assert _sync._sizes_match(24 * 1024**2, 26 * 1024**2) is False
+
+    def test_unknown_size_never_matches(self):
+        assert _sync._sizes_match(None, 100) is False
+        assert _sync._sizes_match(100, None) is False
+
+
+from app.services.pan import pan_sync_service as _sync  # noqa: E402  (放后面避免影响上文阅读)
+
+
+class TestPanSyncService:
+    """同步主流程：假客户端验证 跳过/覆盖/上传/逐文件清理/暂存目录回收。"""
+
+    def _run(self, monkeypatch, tmp_path, src_files, dst_files):
+        """src_files: {绝对路径: size}；dst_files: {绝对路径: size}。返回 (任务终态, 删除列表, 上传列表)。"""
+        import posixpath
+
+        deleted_dst: list[str] = []
+        uploaded_dst: list[str] = []
+
+        class _FakePan:
+            def __init__(self, files):
+                self._files = files
+
+            def list_entries(self, remote: str = "/"):
+                remote = remote.rstrip("/") or "/"
+                out = []
+                seen_dirs: set[str] = set()
+                for path, size in self._files.items():
+                    parent = posixpath.dirname(path)
+                    # 沿途目录也作为条目出现（真实网盘 list 目录/文件混合）
+                    d = parent
+                    while d and d != "/":
+                        if posixpath.dirname(d) == remote and d not in seen_dirs:
+                            seen_dirs.add(d)
+                            out.append({
+                                "name": posixpath.basename(d),
+                                "path": d,
+                                "is_dir": True,
+                                "fid": None,
+                                "size": None,
+                                "mtime": None,
+                            })
+                        d = posixpath.dirname(d)
+                    if parent == remote:
+                        out.append({
+                            "name": posixpath.basename(path),
+                            "path": path,
+                            "is_dir": False,
+                            "fid": None,
+                            "size": size,
+                            "mtime": None,
+                        })
+                return out
+
+            def ensure_dir(self, remote: str) -> None:
+                return None
+
+            def delete(self, remote: str) -> None:
+                deleted_dst.append(remote)
+
+            def upload(self, local_path, remote, timeout=None):
+                uploaded_dst.append(str(remote))
+                return remote
+
+            def download(self, remote, dest, timeout=None):
+                # 模拟百度客户端语义：dest 为目录时，文件落在 dest/ basename(remote)
+                p = Path(dest)
+                if p.is_dir():
+                    p = p / posixpath.basename(remote)
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text("x")
+                return str(p)
+
+        src = _FakePan(src_files)
+        dst = _FakePan(dst_files)
+        monkeypatch.setattr(_sync, "make_client", lambda t: src if t == "baidu" else dst)
+        monkeypatch.setenv("PAN_SYNC_STAGING_DIR", str(tmp_path / "staging"))
+
+        async def _go():
+            task = _sync.start_sync("baidu", "/闲鱼/多盘测试", is_dir=True)
+            # start_sync 返回的是不含内部句柄的公开视图，句柄从注册表取
+            await _sync._sync_tasks[task["task_id"]]["_handle"]
+            return _sync.get_task(task["task_id"])
+
+        task = asyncio.run(_go())
+        return task, deleted_dst, uploaded_dst
+
+    def test_skip_upload_and_cleanup(self, monkeypatch, tmp_path):
+        src = {"/闲鱼/多盘测试/已存在.txt": 100, "/闲鱼/多盘测试/子目录/新文件.txt": 200}
+        dst = {"/闲鱼/多盘测试/已存在.txt": 100}
+        task, deleted, uploaded = self._run(monkeypatch, tmp_path, src, dst)
+        assert task["status"] == "done"
+        assert task["total"] == 2
+        assert task["uploaded"] == 1 and task["skipped"] == 1 and task["failed"] == 0
+        assert deleted == []  # 大小一致不触发覆盖删除
+        assert len(uploaded) == 1
+        # 逐文件清理 + 任务级 finally 回收：暂存目录应已不存在
+        assert not (tmp_path / "staging").exists() or not any((tmp_path / "staging").iterdir())
+
+    def test_overwrite_deletes_dst_first(self, monkeypatch, tmp_path):
+        src = {"/闲鱼/多盘测试/旧版本.txt": 87}
+        dst = {"/闲鱼/多盘测试/旧版本.txt": 24}
+        task, deleted, uploaded = self._run(monkeypatch, tmp_path, src, dst)
+        assert task["status"] == "done"
+        assert task["uploaded"] == 1 and task["skipped"] == 0
+        assert deleted == ["/闲鱼/多盘测试/旧版本.txt"]
+        assert len(uploaded) == 1
+
+    def test_single_file_under_dir_walk(self, monkeypatch, tmp_path):
+        # 单文件放在子目录里，验证递归收集（_run 固定按文件夹同步）
+        src = {"/闲鱼/多盘测试/子目录/单文件.txt": 50}
+        task, deleted, uploaded = self._run(monkeypatch, tmp_path, src, {})
+        assert task["status"] == "done" and task["total"] == 1 and task["uploaded"] == 1
+
+    def test_reject_unsupported_src(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("PAN_SYNC_STAGING_DIR", str(tmp_path / "staging"))
+        with pytest.raises(PanError, match="不支持的同步源网盘"):
+            _sync.start_sync("aliyun", "/x", is_dir=False)
