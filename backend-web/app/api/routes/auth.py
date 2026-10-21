@@ -40,39 +40,10 @@ async def login_user(
     user: User | None = None
     error_message: str | None = None
 
-    # 检查是否启用了登录滑动验证码
-    from app.services.system_setting_service import SystemSettingService
-    setting_service = SystemSettingService(session)
-    all_settings = await setting_service.list_settings()
-    captcha_enabled_str = all_settings.get("login_captcha_enabled")
-    captcha_enabled = captcha_enabled_str in (None, "true", "1")  # 默认开启
-
-    # 账号密码登录和邮箱密码登录需要验证滑动验证码
+    # 账号密码登录和邮箱密码登录
     if payload.username and payload.password:
-        # 账号密码登录 - 需要滑动验证（如果开启）
-        if captcha_enabled:
-            from app.api.routes.geetest import check_geetest_verified
-            
-            if not payload.geetest_challenge:
-                return LoginResponse(success=False, message="请完成滑动验证")
-            
-            geetest_ok, geetest_msg = check_geetest_verified(payload.geetest_challenge)
-            if not geetest_ok:
-                return LoginResponse(success=False, message=geetest_msg)
-        
         user, error_message = await auth_service.authenticate_by_username(payload.username, payload.password)
     elif payload.email and payload.password:
-        # 邮箱密码登录 - 需要滑动验证（如果开启）
-        if captcha_enabled:
-            from app.api.routes.geetest import check_geetest_verified
-            
-            if not payload.geetest_challenge:
-                return LoginResponse(success=False, message="请完成滑动验证")
-            
-            geetest_ok, geetest_msg = check_geetest_verified(payload.geetest_challenge)
-            if not geetest_ok:
-                return LoginResponse(success=False, message=geetest_msg)
-        
         user, error_message = await auth_service.authenticate_by_email(payload.email, payload.password)
     elif payload.email and payload.verification_code:
         # 邮箱验证码登录

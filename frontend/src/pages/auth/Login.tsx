@@ -5,12 +5,11 @@ import { MessageSquare, User, Lock, Mail, KeyRound, Eye, EyeOff } from 'lucide-r
 import { AuthNavbar } from '@/components/common/AuthNavbar'
 import { SafeHtml } from '@/components/common/SafeHtml'
 import { getDefaultAuthFooterAdSettings, getDefaultLoginBrandingSettings } from '@/api/settings'
-import { login, verifyToken, getRegistrationStatus, getLoginInfoStatus, generateCaptcha, verifyCaptcha, sendVerificationCode, getLoginCaptchaStatus, getLoginBrandingSettings, getAuthFooterAdSettings } from '@/api/auth'
+import { login, verifyToken, getRegistrationStatus, getLoginInfoStatus, generateCaptcha, verifyCaptcha, sendVerificationCode, getLoginBrandingSettings, getAuthFooterAdSettings } from '@/api/auth'
 import { useAuthStore } from '@/store/authStore'
 import { useUIStore } from '@/store/uiStore'
 import { cn } from '@/utils/cn'
 import { ButtonLoading } from '@/components/common/Loading'
-import { GeetestCaptcha, type GeetestResult } from '@/components/common/GeetestCaptcha'
 import { POPUP_ANNOUNCEMENT_SHOWN_KEY } from '@/components/common/PopupAnnouncementModal'
 
 type LoginType = 'username' | 'email-password' | 'email-code'
@@ -25,7 +24,6 @@ export function Login() {
   const [showPassword, setShowPassword] = useState(false)
   const [registrationEnabled, setRegistrationEnabled] = useState(true)
   const [showDefaultLogin, setShowDefaultLogin] = useState(true)
-  const [loginCaptchaEnabled, setLoginCaptchaEnabled] = useState<boolean | null>(null)
   const [loginBranding, setLoginBranding] = useState(() => getDefaultLoginBrandingSettings())
   const [authFooterAd, setAuthFooterAd] = useState(() => getDefaultAuthFooterAdSettings())
 
@@ -44,16 +42,6 @@ export function Login() {
   const [captchaVerified, setCaptchaVerified] = useState(false)
   const [countdown, setCountdown] = useState(0)
   const [verifying, setVerifying] = useState(false)
-
-  // 极验滑动验证码状态
-  const [geetestResult, setGeetestResult] = useState<GeetestResult | null>(null)
-  const [geetestKey, setGeetestKey] = useState(0)
-
-  // 重置滑动验证码（登录失败时使用）
-  const resetGeetest = () => {
-    setGeetestResult(null)
-    setGeetestKey((k) => k + 1)
-  }
 
   // Check if already logged in
   useEffect(() => {
@@ -84,10 +72,6 @@ export function Login() {
 
     getLoginInfoStatus()
       .then((result) => setShowDefaultLogin(result.enabled))
-      .catch(() => {})
-
-    getLoginCaptchaStatus()
-      .then((result) => setLoginCaptchaEnabled(result.enabled))
       .catch(() => {})
 
     getLoginBrandingSettings()
@@ -172,26 +156,7 @@ export function Login() {
 
   // 切换登录类型时的处理
   const handleLoginTypeChange = (newType: LoginType) => {
-    const oldType = loginType
     setLoginType(newType)
-    
-    // 只有在需要滑块验证的类型之间切换时，才重置验证结果
-    // 用户名登录 <-> 邮箱密码登录：共用滑块，不需要重置
-    // 切换到/从验证码登录：需要重置
-    const needsGeetest = (type: LoginType) => type === 'username' || type === 'email-password'
-    
-    if (needsGeetest(oldType) !== needsGeetest(newType)) {
-      // 从需要滑块切换到不需要，或反过来，重置状态
-      setGeetestResult(null)
-    } else if (needsGeetest(oldType) && needsGeetest(newType)) {
-      // 在两个需要滑块的类型之间切换，保持验证结果
-      // 不做任何操作
-    }
-  }
-
-  // 极验验证成功回调
-  const handleGeetestSuccess = (result: GeetestResult) => {
-    setGeetestResult(result)
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -207,18 +172,9 @@ export function Login() {
           setLoading(false)
           return
         }
-        // 检查滑动验证码（仅确认开启时前端校验）
-        if (loginCaptchaEnabled === true && !geetestResult) {
-          addToast({ type: 'error', message: '请完成滑动验证' })
-          setLoading(false)
-          return
-        }
-        loginData = { 
-          username, 
-          password,
-          geetest_challenge: geetestResult?.challenge,
-          geetest_validate: geetestResult?.validate,
-          geetest_seccode: geetestResult?.seccode
+        loginData = {
+          username,
+          password
         }
       } else if (loginType === 'email-password') {
         if (!email || !emailPassword) {
@@ -226,18 +182,9 @@ export function Login() {
           setLoading(false)
           return
         }
-        // 检查滑动验证码（仅确认开启时前端校验）
-        if (loginCaptchaEnabled === true && !geetestResult) {
-          addToast({ type: 'error', message: '请完成滑动验证' })
-          setLoading(false)
-          return
-        }
-        loginData = { 
-          email, 
-          password: emailPassword,
-          geetest_challenge: geetestResult?.challenge,
-          geetest_validate: geetestResult?.validate,
-          geetest_seccode: geetestResult?.seccode
+        loginData = {
+          email,
+          password: emailPassword
         }
       } else {
         if (!emailForCode || !verificationCode) {
@@ -263,13 +210,9 @@ export function Login() {
         navigate('/dashboard')
       } else {
         addToast({ type: 'error', message: result.message || '登录失败' })
-        // 登录失败，重置滑动验证
-        resetGeetest()
       }
     } catch {
       addToast({ type: 'error', message: '登录失败，请检查网络连接' })
-      // 登录失败，重置滑动验证
-      resetGeetest()
     } finally {
       setLoading(false)
     }
@@ -455,19 +398,6 @@ export function Login() {
                     </div>
                   </div>
                 </>
-              )}
-
-              {/* 滑动验证码 - 用户名和邮箱密码登录共用一个组件 */}
-              {loginCaptchaEnabled === true && (loginType === 'username' || loginType === 'email-password') && (
-                <div className="input-group">
-                  <label className="input-label">滑动验证</label>
-                  <GeetestCaptcha
-                    key={geetestKey}
-                    onSuccess={handleGeetestSuccess}
-                    onError={(err) => addToast({ type: 'error', message: err })}
-                    disabled={loading}
-                  />
-                </div>
               )}
 
               {/* Email code login */}
