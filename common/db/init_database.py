@@ -2024,6 +2024,31 @@ class DatabaseInitializer:
                 INDEX idx_alti_task_status (task_id, status)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI铺货任务明细表';
         """,
+
+        # 网盘互传同步日志表（每次同步任务结束落一条，日志管理页排查用）
+        "xy_pan_sync_logs": """
+            CREATE TABLE IF NOT EXISTS xy_pan_sync_logs (
+                id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+                task_id VARCHAR(16) NOT NULL COMMENT '任务ID（内存任务ID）',
+                src_type VARCHAR(20) NOT NULL COMMENT '源网盘：baidu/quark',
+                dst_type VARCHAR(20) NOT NULL COMMENT '目标网盘：baidu/quark',
+                remote VARCHAR(500) NOT NULL COMMENT '同步的源盘路径',
+                is_dir TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否文件夹同步',
+                status VARCHAR(16) NOT NULL COMMENT '任务状态：done/failed',
+                total INT NOT NULL DEFAULT 0 COMMENT '文件总数',
+                processed INT NOT NULL DEFAULT 0 COMMENT '已处理文件数',
+                uploaded INT NOT NULL DEFAULT 0 COMMENT '上传文件数',
+                skipped INT NOT NULL DEFAULT 0 COMMENT '查重跳过文件数',
+                failed INT NOT NULL DEFAULT 0 COMMENT '失败文件数',
+                errors TEXT DEFAULT NULL COMMENT '单文件错误列表（JSON数组，最多10条）',
+                duration_seconds DOUBLE DEFAULT NULL COMMENT '任务耗时（秒）',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+                INDEX idx_psl_task_id (task_id),
+                INDEX idx_psl_created_at (created_at),
+                INDEX idx_psl_status (status)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='网盘互传同步日志表';
+        """,
     }
     
     # 字段迁移定义：表名 -> [(字段名, 字段定义, 在哪个字段后面)]

@@ -100,6 +100,7 @@ const TokenRenewalBatches = React.lazy(() => import('@/pages/tokenRenewalLogs/To
 const TokenRenewalBatchDetailPage = React.lazy(() => import('@/pages/tokenRenewalLogs/TokenRenewalBatchDetail').then(m => ({ default: m.TokenRenewalBatchDetailPage })))
 const CookiesRefreshBatches = React.lazy(() => import('@/pages/cookiesRefreshLogs/CookiesRefreshBatches').then(m => ({ default: m.CookiesRefreshBatches })))
 const CookiesRefreshBatchDetailPage = React.lazy(() => import('@/pages/cookiesRefreshLogs/CookiesRefreshBatchDetail').then(m => ({ default: m.CookiesRefreshBatchDetailPage })))
+const PanSyncLogs = React.lazy(() => import('@/pages/panSyncLogs/PanSyncLogs').then(m => ({ default: m.PanSyncLogs })))
 const ApiCookieRenewBatches = React.lazy(() => import('@/pages/apiCookieRenewLogs/ApiCookieRenewBatches').then(m => ({ default: m.ApiCookieRenewBatches })))
 const ApiCookieRenewBatchDetailPage = React.lazy(() => import('@/pages/apiCookieRenewLogs/ApiCookieRenewBatchDetail').then(m => ({ default: m.ApiCookieRenewBatchDetailPage })))
 const CloseNoticeBatches = React.lazy(() => import('@/pages/closeNoticeLogs/CloseNoticeBatches').then(m => ({ default: m.CloseNoticeBatches })))
@@ -418,6 +419,7 @@ function App() {
             <Route path="admin/token-renewal-batches/:batchId" element={<TokenRenewalBatchDetailPage />} />
             <Route path="admin/cookies-refresh-batches" element={<CookiesRefreshBatches />} />
             <Route path="admin/cookies-refresh-batches/:batchId" element={<CookiesRefreshBatchDetailPage />} />
+            <Route path="admin/pan-sync-logs" element={<PanSyncLogs />} />
             <Route path="admin/api-cookie-renew-batches" element={<ApiCookieRenewBatches />} />
             <Route path="admin/api-cookie-renew-batches/:batchId" element={<ApiCookieRenewBatchDetailPage />} />
             <Route path="admin/close-notice-batches" element={<CloseNoticeBatches />} />

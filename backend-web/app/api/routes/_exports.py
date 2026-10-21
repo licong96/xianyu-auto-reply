@@ -76,6 +76,7 @@ from . import (
     risk_control_logs,
     account_login_logs,
     db_backup_logs,
+    pan_sync_logs,
     search,
     shared_scan,
     system_control,
@@ -168,6 +169,7 @@ api_router.include_router(admin.router, prefix="/admin", tags=["管理员功能"
 api_router.include_router(cookies_refresh_logs.router, prefix="/admin", tags=["COOKIES刷新日志"])
 api_router.include_router(api_cookie_renew_logs.router, prefix="/admin", tags=["接口续期Cookies日志"])
 api_router.include_router(token_renewal_logs.router, prefix="/admin", tags=["Token续期日志"])
+api_router.include_router(pan_sync_logs.router, prefix="/admin", tags=["网盘同步日志"])
 
 # 代理和上传
 api_router.include_router(proxy.router, prefix="/proxy", tags=["代理配置"])

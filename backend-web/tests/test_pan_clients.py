@@ -463,6 +463,13 @@ class TestPanSyncService:
         dst = _FakePan(dst_files)
         monkeypatch.setattr(_sync, "make_client", lambda t: src if t == "baidu" else dst)
         monkeypatch.setenv("PAN_SYNC_STAGING_DIR", str(tmp_path / "staging"))
+        # 落库钩子在 _run_sync_safely 的 finally 中执行，单测不碰真实数据库
+        persisted: list[dict] = []
+
+        async def _fake_persist(task: dict) -> None:
+            persisted.append(task)
+
+        monkeypatch.setattr(_sync, "_persist_task_log", _fake_persist)
 
         async def _go():
             task = _sync.start_sync("baidu", "/闲鱼/多盘测试", is_dir=True)
@@ -471,6 +478,7 @@ class TestPanSyncService:
             return _sync.get_task(task["task_id"])
 
         task = asyncio.run(_go())
+        assert len(persisted) == 1 and persisted[0]["task_id"] == task["task_id"]
         return task, deleted_dst, uploaded_dst
 
     def test_skip_upload_and_cleanup(self, monkeypatch, tmp_path):

@@ -33,6 +33,7 @@ from common.models.scheduled_cookies_refresh_log import ScheduledCookiesRefreshL
 from common.models.scheduled_api_cookie_renew_log import ScheduledApiCookieRenewLog
 from common.models.scheduled_close_notice_log import ScheduledCloseNoticeLog
 from common.models.db_backup_log import DbBackupLog
+from common.models.pan_sync_log import PanSyncLog
 from common.models.announcement import Announcement
 from common.models.confirm_receipt_message import ConfirmReceiptMessage
 from common.models.scheduled_task import ScheduledTask
@@ -109,6 +110,7 @@ __all__ = [
     "ScheduledApiCookieRenewLog",
     "ScheduledCloseNoticeLog",
     "DbBackupLog",
+    "PanSyncLog",
     "Announcement",
     "ConfirmReceiptMessage",
     "ScheduledTask",

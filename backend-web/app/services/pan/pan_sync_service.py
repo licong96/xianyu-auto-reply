@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import shutil
 import time
@@ -195,8 +196,41 @@ async def _collect_files(client, remote: str, is_dir: bool) -> List[Dict[str, An
     return await walk(remote, "")
 
 
+async def _persist_task_log(task: Dict[str, Any]) -> None:
+    """任务结束时把结果落 xy_pan_sync_logs（日志管理页可查）。
+
+    尽力而为：任何异常只记日志，绝不影响同步主流程和任务状态。
+    """
+    try:
+        from common.db.session import async_session_maker
+        from common.models.pan_sync_log import PanSyncLog
+
+        async with async_session_maker() as session:
+            session.add(PanSyncLog(
+                task_id=task["task_id"],
+                src_type=task["src_type"],
+                dst_type=task["dst_type"],
+                remote=task["remote"][:500],
+                is_dir=task["is_dir"],
+                status=task["status"],
+                total=task["total"],
+                processed=task["processed"],
+                uploaded=task["uploaded"],
+                skipped=task["skipped"],
+                failed=task["failed"],
+                errors=json.dumps(task["errors"], ensure_ascii=False) if task["errors"] else None,
+                duration_seconds=(
+                    round(task["finished_at"] - task["created_at"], 3)
+                    if task.get("finished_at") else None
+                ),
+            ))
+            await session.commit()
+    except Exception as exc:  # noqa: BLE001 - 日志落库失败不阻断任务
+        logger.warning(f"[pan-sync] 同步日志落库失败（任务 {task['task_id']}）：{exc}")
+
+
 async def _run_sync_safely(task: Dict[str, Any], key: str) -> None:
-    """任务外壳：统一记状态、finally 清理暂存目录与运行标记。"""
+    """任务外壳：统一记状态、finally 清理暂存目录与运行标记、落历史日志。"""
     try:
         await _run_sync(task)
         if task["status"] != "failed":
@@ -213,6 +247,7 @@ async def _run_sync_safely(task: Dict[str, Any], key: str) -> None:
             f"[pan-sync] 任务结束 {task['task_id']}：{task['status']}，"
             f"上传 {task['uploaded']}，跳过 {task['skipped']}，失败 {task['failed']}"
         )
+        await _persist_task_log(task)
 
 
 async def _run_sync(task: Dict[str, Any]) -> None:
