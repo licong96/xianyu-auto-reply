@@ -11,7 +11,8 @@
 | 数据库 | `mysqldump xianyu_data`（或直接用 `backups/` 里最新的 .sql.gz） | 导入 Windows 的 MySQL | 想全新开始可不拷，服务启动会自动建表 |
 | 商品图片 | `backend-web/static/uploads/`（约 1.3 MB） | 同路径 | 已上架商品的图片 URL 依赖它 |
 | 本地试卷文件 | `data/papers/`（约 46 MB） | 同路径 | 资料池已下载文件的本地副本，不想迁移可跳过（网盘里还有） |
-| 夸克 CLI | ❌ 不拷 | 需另备 Windows 版 | 现用的 `kuake_cli/kuake` 是 macOS arm64 二进制，Windows 跑不了 |
+| 夸克 CLI | ❌ 不拷（Mac 二进制） | 需另备 Windows 版 | 已有源码构建产物 `kuake-windows-amd64.exe`（配置 .env `KUAKE_BIN`/`KUAKE_WORKDIR`），或到 Windows 后重新构建；凭证在 `kuake_cli/.env` 的 `KUAKE_COOKIE` |
+| 百度 CLI（BaiduPCS-Go） | ❌ 不拷 | 需另备 Windows 版 | release 页下载 `BaiduPCS-Go-v4.0.2-windows-amd64.zip`，配置 .env `BAIDUPCS_BIN`；cookie 登录一次即可（登录态按 Windows 用户隔离） |
 | 浏览器登录态 `browser_data/` | ❌ 建议不拷（319 MB） | — | 跨系统拷贝易出问题，到 Windows 后重新扫码登录即可 |
 | macOS 脚本 | ❌ 不拷 | — | `启动.command / 停止.command / build*.sh / deploy*.sh` 是 mac/Linux 专用 |
 
@@ -37,7 +38,14 @@
 ### 1. `.env`（项目根目录）
 
 - `MYSQL_HOST` 改成 Windows 实际地址（Docker 方式填 `127.0.0.1`）、`MYSQL_PASSWORD` 改成新密码
-- `KUAKE_BIN`：夸克 CLI 在 Windows 上没有可用二进制，先留空或指向 Windows 版路径；**留空则资料池「上传网盘」功能不可用**（其余功能不受影响）
+- `KUAKE_BIN` / `KUAKE_WORKDIR`：夸克 CLI 指向 Windows 版二进制（`kuake-windows-amd64.exe`）；**留空则资料池「上传网盘」、网盘管理（浏览/分享/互传同步）全部不可用**（其余功能不受影响）；凭证在 `kuake_cli/.env` 的 `KUAKE_COOKIE`
+- `BAIDUPCS_BIN`：百度网盘 CLI（BaiduPCS-Go）Windows 版路径；cookie 登录一次即可，接入后网盘管理支持百度/夸克双盘并列、一键互传同步（详见 [27-网盘互传同步方案](./27-网盘互传同步方案.md)、[26-百度网盘接入部署与测试](./26-百度网盘接入部署与测试.md)）
+- 网盘相关（启用双盘后）：
+  ```bash
+  PAN_ENABLED_PANS=quark,baidu              # 双盘都启用，互传的前提
+  PAN_SYNC_STAGING_DIR=D:\pan_sync_staging  # 互传本地暂存目录，默认项目 data/ 下，C 盘空间紧张必改
+  # PAN_SYNC_CONCURRENCY=2                  # 互传并发数，默认 2
+  ```
 - 检查所有路径类配置为 Windows 格式
 
 ### 2. 数据库导入（若迁移数据）
@@ -96,13 +104,14 @@ cd frontend; npm run dev                                     # 9000
 - [ ] `http://localhost:9000` 打开管理后台，能登录（迁移了数据库则密码与原系统一致，否则 admin / admin123，登录后立刻改密）
 - [ ] 账号管理 → 扫码登录一个闲鱼小号（会弹真实 Chrome 窗口，触发验证人工处理）
 - [ ] 用小号拍一单，验证自动发货 + 自动续售链路
+- [ ] 网盘管理页：顶部显示「已连接：夸克、百度」；找一个小文件点「同步到X」，完成后对端盘同路径出现文件；日志管理 → 网盘同步日志能看到该任务记录
 - [ ] Windows 防火墙确认 8089/8090/8091/9000 未对公网开放
 
 ## 六、重要提醒
 
 1. **不要两台机器同时在线跑同一批闲鱼账号**——两边都会连同一个账号的消息通道，自动回复/自动发货会重复触发，还容易触发闲鱼风控。迁移期先在 Mac 上 `./停止.command` 停干净再启动 Windows 侧。
 2. `browser_data` 不迁移，Windows 上所有闲鱼账号需重新扫码登录。
-3. 夸克网盘上传功能在 Windows 侧暂不可用（无 Windows 版 kuake 二进制），已生成的分享卡券不受影响。
+3. 网盘功能在 Windows 侧已可用：kuake Windows 二进制已源码构建（路径见 .env `KUAKE_BIN`，凭证 `kuake_cli/.env` 的 `KUAKE_COOKIE`）；百度盘装 BaiduPCS-Go 并 cookie 登录一次（**用运行后端的同一 Windows 用户登录**，登录态在 `%APPDATA%\BaiduPCS-Go\` 按用户隔离，服务方式运行时尤其注意）。双盘启用后支持网盘管理页互传同步，暂存目录（`PAN_SYNC_STAGING_DIR`）所在盘需留足空间（剩余 < 5GB + 单文件大小时拒绝同步）。
 4. 定时备份任务（`backups/` 里的 mysqldump）是 Mac 上的 cron/调度产生的，Windows 侧如需备份要另行配置。
 
 ## 七、Tailscale 远程访问：在公司打开家里的管理后台
