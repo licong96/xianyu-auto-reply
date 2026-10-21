@@ -40,6 +40,26 @@ MAX_FINISHED_TASKS = 100  # 内存中保留的已完成任务数（防膨胀）
 
 SYNC_CONCURRENCY = max(1, int(os.environ.get("PAN_SYNC_CONCURRENCY", "2")))
 
+# 网盘网页/CLI 下载接口的单文件大小上限（2026-10-21 实测：夸克、百度网页版下载均不能超过 50M）：
+# 超过会被服务端确定性拒绝（夸克报「超过文件下载大小限制，请使用客户端下载」），
+# 且下载失败发生在先删目标旧文件之后，会造成「目标被删、新文件又没传上」的空窗。
+# 预检提前失败给出明确原因。
+# 可用环境变量 PAN_SYNC_QUARK_MAX_DOWNLOAD_BYTES / PAN_SYNC_BAIDU_MAX_DOWNLOAD_BYTES 分别覆盖
+# （设为 0 关闭对应方向的预检）。
+QUARK_WEB_DOWNLOAD_MAX_BYTES = int(os.environ.get("PAN_SYNC_QUARK_MAX_DOWNLOAD_BYTES", str(50 * 1024**2)))
+BAIDU_WEB_DOWNLOAD_MAX_BYTES = int(os.environ.get("PAN_SYNC_BAIDU_MAX_DOWNLOAD_BYTES", str(50 * 1024**2)))
+
+PAN_LABELS = {"quark": "夸克网盘", "baidu": "百度网盘"}
+
+
+def _src_download_limit(src_type: str) -> int:
+    """源盘下载单文件上限（字节）；未知源盘或关闭预检时返回 0。"""
+    if src_type == "quark":
+        return QUARK_WEB_DOWNLOAD_MAX_BYTES
+    if src_type == "baidu":
+        return BAIDU_WEB_DOWNLOAD_MAX_BYTES
+    return 0
+
 
 def _staging_root() -> Path:
     raw = os.environ.get("PAN_SYNC_STAGING_DIR")
@@ -159,6 +179,31 @@ def _prune_finished() -> None:
     finished.sort(key=lambda t: t["created_at"])
     for t in finished[: len(finished) - MAX_FINISHED_TASKS]:
         _sync_tasks.pop(t["task_id"], None)
+
+
+async def preview_sync(src_type: str, remote: str, is_dir: bool) -> Dict[str, Any]:
+    """同步前预检（只读，不启动任务）：列出注定失败的超大文件。
+
+    网盘网页版下载接口有单文件上限（实测 50M），超限文件同步时必然失败，
+    提前告知用户，避免点完同步才在日志里看到失败。
+    """
+    if src_type not in SYNC_PAIRS:
+        raise PanError(f"不支持的同步源网盘：{src_type}（支持：{'、'.join(SYNC_PAIRS)}）")
+    limit = _src_download_limit(src_type)
+    client = make_client(src_type)
+    files = await _collect_files(client, remote, is_dir)
+    oversize = [
+        {"rel": f["rel"], "remote": f["remote"], "size": f["size"]}
+        for f in files
+        if limit > 0 and f["size"] is not None and f["size"] > limit
+    ]
+    return {
+        "src_type": src_type,
+        "dst_type": SYNC_PAIRS[src_type],
+        "total": len(files),
+        "limit_bytes": limit,
+        "oversize": oversize,
+    }
 
 
 # ---------- 同步执行 ----------
@@ -291,6 +336,22 @@ async def _run_sync(task: Dict[str, Any]) -> None:
                     task["skipped"] += 1
                     task["current"] = rel
                     return  # 已存在且大小一致，跳过
+
+                # 大文件预检（须在删除目标旧文件之前）：
+                # 下载接口对超限文件必然失败，提前报错而不是删完目标再失败
+                src_limit = _src_download_limit(task["src_type"])
+                if (
+                    src_limit > 0
+                    and item["size"] is not None
+                    and item["size"] > src_limit
+                ):
+                    src_label = PAN_LABELS.get(task["src_type"], task["src_type"])
+                    dst_label = PAN_LABELS.get(task["dst_type"], task["dst_type"])
+                    raise PanError(
+                        f"文件约 {item['size'] / 1024**2:.0f}MB，超过{src_label}网页下载上限 "
+                        f"{src_limit / 1024**2:.0f}MB（服务端拒绝下载，重试无效）；"
+                        f"请用{src_label}客户端下载后手动上传到{dst_label}"
+                    )
 
                 _check_disk(need_bytes=item["size"] or 0)
 

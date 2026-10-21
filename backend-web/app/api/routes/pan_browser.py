@@ -326,6 +326,35 @@ class PanSyncRequest(BaseModel):
     is_dir: bool = Field(False, description="同步的是整个文件夹")
 
 
+def _validate_sync_pans(src_type: str) -> str | None:
+    """校验同步源/目标盘是否可用，返回错误消息或 None。"""
+    dst_type = pan_sync_service.SYNC_PAIRS.get(src_type)
+    if not dst_type:
+        return f"不支持的同步源网盘：{src_type}（支持：{'、'.join(pan_sync_service.SYNC_PAIRS)}）"
+    enabled = enabled_pan_types()
+    for pan_type in (src_type, dst_type):
+        if pan_type not in enabled:
+            return f"{pan_type} 网盘未启用（PAN_ENABLED_PANS={','.join(enabled)}）"
+    return None
+
+
+@router.post("/sync-preview", response_model=ApiResponse)
+async def pan_sync_preview(
+    req: PanSyncRequest,
+    current_user: User = Depends(get_current_active_user),
+) -> Dict[str, Any]:
+    """同步前预检：扫描源路径，返回超过源盘下载上限、注定失败的文件列表（只读）。"""
+    err = _validate_sync_pans(req.pan_type)
+    if err:
+        return ApiResponse(success=False, message=err, data=None)
+    path = _resolve_pan_path(req.path, _pan_root_dir())
+    try:
+        data = await pan_sync_service.preview_sync(req.pan_type, path, req.is_dir)
+    except PanError as exc:
+        return ApiResponse(success=False, message=str(exc), data=None)
+    return ApiResponse(success=True, message="ok", data=data)
+
+
 @router.post("/sync", response_model=ApiResponse)
 async def pan_sync(
     req: PanSyncRequest,
@@ -334,20 +363,9 @@ async def pan_sync(
     """把文件/文件夹从源盘同步到对端盘的相同路径（后台任务，进度走 /sync-status 查询）。"""
     src_type = req.pan_type
     dst_type = pan_sync_service.SYNC_PAIRS.get(src_type)
-    if not dst_type:
-        return ApiResponse(
-            success=False,
-            message=f"不支持的同步源网盘：{src_type}（支持：{'、'.join(pan_sync_service.SYNC_PAIRS)}）",
-            data=None,
-        )
-    enabled = enabled_pan_types()
-    for pan_type in (src_type, dst_type):
-        if pan_type not in enabled:
-            return ApiResponse(
-                success=False,
-                message=f"{pan_type} 网盘未启用（PAN_ENABLED_PANS={','.join(enabled)}）",
-                data=None,
-            )
+    err = _validate_sync_pans(src_type)
+    if err:
+        return ApiResponse(success=False, message=err, data=None)
 
     path = _resolve_pan_path(req.path, _pan_root_dir())
     try:

@@ -398,7 +398,7 @@ from app.services.pan import pan_sync_service as _sync  # noqa: E402  (放后面
 class TestPanSyncService:
     """同步主流程：假客户端验证 跳过/覆盖/上传/逐文件清理/暂存目录回收。"""
 
-    def _run(self, monkeypatch, tmp_path, src_files, dst_files):
+    def _run(self, monkeypatch, tmp_path, src_files, dst_files, src_type: str = "baidu"):
         """src_files: {绝对路径: size}；dst_files: {绝对路径: size}。返回 (任务终态, 删除列表, 上传列表)。"""
         import posixpath
 
@@ -461,7 +461,7 @@ class TestPanSyncService:
 
         src = _FakePan(src_files)
         dst = _FakePan(dst_files)
-        monkeypatch.setattr(_sync, "make_client", lambda t: src if t == "baidu" else dst)
+        monkeypatch.setattr(_sync, "make_client", lambda t: src if t == src_type else dst)
         monkeypatch.setenv("PAN_SYNC_STAGING_DIR", str(tmp_path / "staging"))
         # 落库钩子在 _run_sync_safely 的 finally 中执行，单测不碰真实数据库
         persisted: list[dict] = []
@@ -472,7 +472,7 @@ class TestPanSyncService:
         monkeypatch.setattr(_sync, "_persist_task_log", _fake_persist)
 
         async def _go():
-            task = _sync.start_sync("baidu", "/闲鱼/多盘测试", is_dir=True)
+            task = _sync.start_sync(src_type, "/闲鱼/多盘测试", is_dir=True)
             # start_sync 返回的是不含内部句柄的公开视图，句柄从注册表取
             await _sync._sync_tasks[task["task_id"]]["_handle"]
             return _sync.get_task(task["task_id"])
@@ -512,3 +512,84 @@ class TestPanSyncService:
         monkeypatch.setenv("PAN_SYNC_STAGING_DIR", str(tmp_path / "staging"))
         with pytest.raises(PanError, match="不支持的同步源网盘"):
             _sync.start_sync("aliyun", "/x", is_dir=False)
+
+    def test_quark_oversize_file_precheck_fails_fast(self, monkeypatch, tmp_path):
+        # 超过夸克下载上限的文件：预检直接失败并给出明确原因，小文件不受影响
+        src = {
+            "/闲鱼/多盘测试/大文件.zip": 200 * 1024**2,
+            "/闲鱼/多盘测试/小文件.txt": 100,
+        }
+        task, deleted, uploaded = self._run(monkeypatch, tmp_path, src, {}, src_type="quark")
+        assert task["status"] == "done"
+        assert task["total"] == 2
+        assert task["uploaded"] == 1 and task["failed"] == 1
+        assert any("超过夸克网盘网页下载上限" in e for e in task["errors"])
+        assert any("手动上传到百度网盘" in e for e in task["errors"])
+
+    def test_baidu_oversize_file_precheck_fails_fast(self, monkeypatch, tmp_path):
+        # 百度源同样预检（2026-10-21 实测百度网页版下载也不能超过单文件 50M）
+        src = {
+            "/闲鱼/多盘测试/大文件.zip": 200 * 1024**2,
+            "/闲鱼/多盘测试/小文件.txt": 100,
+        }
+        task, deleted, uploaded = self._run(monkeypatch, tmp_path, src, {})  # 默认 baidu 源
+        assert task["status"] == "done"
+        assert task["uploaded"] == 1 and task["failed"] == 1
+        assert any("超过百度网盘网页下载上限" in e for e in task["errors"])
+        assert any("手动上传到夸克网盘" in e for e in task["errors"])
+
+    def test_baidu_precheck_threshold_can_be_disabled(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(_sync, "BAIDU_WEB_DOWNLOAD_MAX_BYTES", 0)
+        src = {"/闲鱼/多盘测试/大文件.zip": 200 * 1024**2}
+        task, deleted, uploaded = self._run(monkeypatch, tmp_path, src, {})
+        assert task["uploaded"] == 1 and task["failed"] == 0
+
+    def test_quark_precheck_runs_before_overwrite_delete(self, monkeypatch, tmp_path):
+        # 回归：目标盘已有同名不同大小的文件时，预检失败绝不能先删目标旧文件
+        src = {"/闲鱼/多盘测试/大文件.zip": 200 * 1024**2}
+        dst = {"/闲鱼/多盘测试/大文件.zip": 100}
+        task, deleted, uploaded = self._run(monkeypatch, tmp_path, src, dst, src_type="quark")
+        assert task["failed"] == 1 and task["uploaded"] == 0
+        assert deleted == []  # 目标旧文件必须保住
+
+    def test_quark_unknown_size_skips_precheck(self, monkeypatch, tmp_path):
+        # 大小未知（源盘列不出 size）时无法预检，应正常走下载流程
+        src = {"/闲鱼/多盘测试/未知大小.bin": None}
+        task, deleted, uploaded = self._run(monkeypatch, tmp_path, src, {}, src_type="quark")
+        assert task["status"] == "done" and task["uploaded"] == 1 and task["failed"] == 0
+
+    def test_quark_precheck_threshold_can_be_disabled(self, monkeypatch, tmp_path):
+        # 阈值设为 0 即关闭预检（环境变量调大/关闭的场景）
+        monkeypatch.setattr(_sync, "QUARK_WEB_DOWNLOAD_MAX_BYTES", 0)
+        src = {"/闲鱼/多盘测试/大文件.zip": 200 * 1024**2}
+        task, deleted, uploaded = self._run(monkeypatch, tmp_path, src, {}, src_type="quark")
+        assert task["uploaded"] == 1 and task["failed"] == 0
+
+    def test_preview_sync_lists_oversize_files(self, monkeypatch, tmp_path):
+        # 同步前预检：只返回超过源盘下载上限的文件，不启动任务、不写任务注册表
+        import posixpath
+
+        src_files = {
+            "/闲鱼/多盘测试/大文件.zip": 200 * 1024**2,
+            "/闲鱼/多盘测试/小文件.txt": 100,
+        }
+
+        class _FlatPan:
+            def list_entries(self, remote: str = "/"):
+                remote = remote.rstrip("/") or "/"
+                return [
+                    {"name": posixpath.basename(p), "path": p, "is_dir": False,
+                     "fid": None, "size": s, "mtime": None}
+                    for p, s in src_files.items()
+                    if posixpath.dirname(p) == remote
+                ]
+
+        monkeypatch.setattr(_sync, "make_client", lambda t: _FlatPan())
+        tasks_before = len(_sync._sync_tasks)
+        result = asyncio.run(_sync.preview_sync("quark", "/闲鱼/多盘测试", True))
+        assert result["total"] == 2
+        assert result["limit_bytes"] == 50 * 1024**2
+        assert [f["rel"] for f in result["oversize"]] == ["大文件.zip"]
+        assert result["oversize"][0]["size"] == 200 * 1024**2
+        # 预检是只读的：不得启动新任务（注册表条目数不变）
+        assert len(_sync._sync_tasks) == tasks_before

@@ -11,6 +11,8 @@ export interface ConfirmModalProps {
   isOpen: boolean
   title?: string
   message: string
+  /** 可选的附加内容区（如文件列表），显示在 message 下方，可滚动 */
+  detail?: React.ReactNode
   confirmText?: string
   cancelText?: string
   type?: 'warning' | 'danger' | 'info'
@@ -23,6 +25,7 @@ export function ConfirmModal({
   isOpen,
   title = '确认操作',
   message,
+  detail,
   confirmText = '确定',
   cancelText = '取消',
   type = 'warning',
@@ -84,6 +87,11 @@ export function ConfirmModal({
               <p className="text-slate-600 dark:text-slate-400">
                 {message}
               </p>
+              {detail && (
+                <div className="mt-4 max-h-48 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700 text-left">
+                  {detail}
+                </div>
+              )}
             </div>
 
             {/* 按钮 */}

@@ -122,3 +122,26 @@ export const startPanSync = async (data: {
 export const getPanSyncStatus = async (taskId: string): Promise<ApiResponse<PanSyncTask>> => {
   return get<ApiResponse<PanSyncTask>>(`${PREFIX}/sync-status/${taskId}`)
 }
+
+/** 同步前预检：扫描源路径，返回超过源盘下载上限、注定失败的文件列表 */
+export interface PanSyncOversizeFile {
+  rel: string
+  remote: string
+  size: number | null
+}
+
+export interface PanSyncPreview {
+  src_type: string
+  dst_type: string
+  total: number
+  limit_bytes: number
+  oversize: PanSyncOversizeFile[]
+}
+
+export const previewPanSync = async (data: {
+  pan_type: string
+  path: string
+  is_dir: boolean
+}): Promise<ApiResponse<PanSyncPreview>> => {
+  return post<ApiResponse<PanSyncPreview>>(`${PREFIX}/sync-preview`, data)
+}

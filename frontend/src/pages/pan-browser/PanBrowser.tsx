@@ -35,13 +35,16 @@ import {
   getPanStatus,
   getPanSyncStatus,
   importPanFile,
+  previewPanSync,
   startPanSync,
   type PanDriveStatus,
   type PanEntry,
   type PanLocation,
   type PanShareItem,
+  type PanSyncPreview,
   type PanSyncTask,
 } from '@/api/panBrowser'
+import { ConfirmModal } from '@/components/common/ConfirmModal'
 import { PageLoading } from '@/components/common/Loading'
 import { useUIStore } from '@/store/uiStore'
 import { getApiErrorMessage } from '@/utils/request'
@@ -208,6 +211,13 @@ export function PanBrowser() {
   // 互传任务：entry key -> task（后台同步，轮询进度）
   const [syncTasks, setSyncTasks] = useState<Record<string, PanSyncTask>>({})
 
+  // 同步预检：点同步后发现注定失败的超大文件时，先弹窗让用户确认
+  const [syncPreviewModal, setSyncPreviewModal] = useState<{
+    entry: PanEntry
+    action: { srcType: string; dstType: string; srcPath: string }
+    preview: PanSyncPreview
+  } | null>(null)
+
   const navigateTo = useCallback(
     (path: string) => {
       setSearchParams({ path })
@@ -323,10 +333,11 @@ export function PanBrowser() {
     }
   }
 
-  /** 启动互传：把该条目从所在盘同步到对端盘的相同路径 */
-  const handleSync = async (entry: PanEntry) => {
-    const action = syncActionFor(entry, drives)
-    if (!action) return
+  /** 真正启动互传任务（后台同步，进度轮询走 syncTasks） */
+  const startSyncNow = async (
+    entry: PanEntry,
+    action: { srcType: string; dstType: string; srcPath: string }
+  ) => {
     const key = `${entry.file_name}:${entry.dir}`
     try {
       const res = await startPanSync({ pan_type: action.srcType, path: action.srcPath, is_dir: entry.dir })
@@ -339,6 +350,30 @@ export function PanBrowser() {
     } catch (error) {
       addToast({ type: 'error', message: getApiErrorMessage(error, '同步任务启动失败') })
     }
+  }
+
+  /** 启动互传：先预检超大文件（超过源盘下载上限的注定失败，提前提示），确认后再启动 */
+  const handleSync = async (entry: PanEntry) => {
+    const action = syncActionFor(entry, drives)
+    if (!action) return
+    try {
+      const res = await previewPanSync({ pan_type: action.srcType, path: action.srcPath, is_dir: entry.dir })
+      if (res.success && res.data && res.data.oversize.length > 0) {
+        setSyncPreviewModal({ entry, action, preview: res.data })
+        return
+      }
+    } catch {
+      // 预检接口异常不阻塞同步：按原逻辑直接启动
+    }
+    startSyncNow(entry, action)
+  }
+
+  /** 预检弹窗确认：仍要同步（其余文件正常传，超大文件会在任务里标记失败） */
+  const confirmSyncPreview = () => {
+    if (!syncPreviewModal) return
+    const { entry, action } = syncPreviewModal
+    setSyncPreviewModal(null)
+    startSyncNow(entry, action)
   }
 
   // 轮询进行中的互传任务；完成/失败后刷新列表并清理任务标记
@@ -719,6 +754,37 @@ export function PanBrowser() {
           setImportEntry(null)
           loadEntries(currentPath)
         }}
+      />
+
+      {/* 同步预检弹窗：超大文件注定失败，确认后仍可同步其余文件 */}
+      <ConfirmModal
+        isOpen={syncPreviewModal !== null}
+        type="warning"
+        title="存在无法同步的超大文件"
+        message={
+          syncPreviewModal
+            ? `共扫描 ${syncPreviewModal.preview.total} 个文件，其中 ${syncPreviewModal.preview.oversize.length} 个超过${panLabel(syncPreviewModal.preview.src_type)}网盘 ${formatFileSize(syncPreviewModal.preview.limit_bytes)} 的下载上限，同步时必然失败（重试无效）。其余文件可正常同步。`
+            : ''
+        }
+        detail={
+          syncPreviewModal && (
+            <ul className="divide-y divide-slate-100 dark:divide-slate-700">
+              {syncPreviewModal.preview.oversize.map((f) => (
+                <li
+                  key={f.remote}
+                  className="flex items-center justify-between gap-2 px-3 py-2 text-xs"
+                >
+                  <span className="truncate text-slate-700 dark:text-slate-300">{f.rel}</span>
+                  <span className="flex-shrink-0 text-red-500">{formatFileSize(f.size)}</span>
+                </li>
+              ))}
+            </ul>
+          )
+        }
+        confirmText="仍要同步其余文件"
+        cancelText="取消"
+        onConfirm={confirmSyncPreview}
+        onCancel={() => setSyncPreviewModal(null)}
       />
     </div>
   )
