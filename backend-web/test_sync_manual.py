@@ -1,6 +1,6 @@
-"""手动实测网盘互传服务：百度 -> 夸克 单文件同步。
+"""手动实测网盘互传服务。
 
-用法：cd backend-web && .venv/bin/python test_sync_manual.py <远程路径> [is_dir]
+用法：cd backend-web && .venv/bin/python test_sync_manual.py <远程路径> [baidu|quark] [dir]
 """
 import asyncio
 import sys
@@ -17,9 +17,10 @@ from app.services.pan import pan_sync_service
 
 async def main() -> None:
     remote = sys.argv[1] if len(sys.argv) > 1 else "/闲鱼/资料池/多盘测试/多盘合并测试.txt"
-    is_dir = len(sys.argv) > 2 and sys.argv[2] == "dir"
+    src_type = sys.argv[2] if len(sys.argv) > 2 else "baidu"
+    is_dir = len(sys.argv) > 3 and sys.argv[3] == "dir"
 
-    task = pan_sync_service.start_sync("baidu", remote, is_dir)
+    task = pan_sync_service.start_sync(src_type, remote, is_dir)
     print(f"任务已启动: {task['task_id']}  {task['src_type']} -> {task['dst_type']}  {remote}")
     while True:
         await asyncio.sleep(1)
