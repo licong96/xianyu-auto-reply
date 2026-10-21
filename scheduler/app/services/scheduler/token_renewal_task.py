@@ -28,6 +28,7 @@ from common.models.scheduled_token_renewal_log import ScheduledTokenRenewalLog
 from common.models.token_cache import TokenCache
 from common.models.xy_account import XYAccount
 from common.services.account_cookie_service import merge_account_cookie_fields
+from common.services.account_notification_dispatch import send_account_notification
 from common.services.captcha.token_response import (
     is_token_captcha_required,
     is_token_expired_response,
@@ -122,6 +123,7 @@ class TokenRenewalTask:
                     results.append(result)
 
             await self._save_results(batch_id, results)
+            await self._notify_failed_results(results)
             renewed_count = sum(1 for result in results if result.success)
             logger.info(
                 f"【{self.task_name}】执行完成: 批次={batch_id}, 候选={len(candidates)}, "
@@ -140,6 +142,31 @@ class TokenRenewalTask:
             success=False,
             message=message[:500],
         )
+
+    async def _notify_failed_results(
+        self,
+        results: list[TokenRenewalResult],
+    ) -> None:
+        """给本轮续期失败的账号发送通知（按账号冷却，失败不影响主流程）。"""
+        notified: set[str] = set()
+        for result in results:
+            if result.success:
+                continue
+            account_id = result.candidate.account_id
+            if account_id in notified:
+                continue
+            notified.add(account_id)
+            try:
+                await send_account_notification(
+                    account_id,
+                    "❌ Token续期失败",
+                    result.message,
+                    notification_type="token_renewal_failed",
+                )
+            except Exception as exc:
+                logger.error(
+                    f"【{self.task_name}】发送失败通知异常: {type(exc).__name__}: {exc}"
+                )
 
     async def _save_results(
         self,

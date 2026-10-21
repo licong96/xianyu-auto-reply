@@ -922,6 +922,13 @@ class CookieTokenManager:
                         logger.error(f"【{self.cookie_id}】滑块验证失败: {remote_fail_reason}")
                     else:
                         logger.error(f"【{self.cookie_id}】滑块验证失败")
+
+                    # 失败通知（Token相关错误走3小时冷却，附验证链接便于人工处理）
+                    await self.send_token_refresh_notification(
+                        f"Token刷新失败（滑块验证未通过）：{remote_fail_reason or '本地滑块引擎未通过'}",
+                        "captcha_failed",
+                        verification_url=verification_url,
+                    )
                     
                     # 更新风控日志为失败状态
                     captcha_duration = time.time() - captcha_start_time

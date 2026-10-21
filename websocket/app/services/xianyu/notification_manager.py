@@ -315,6 +315,7 @@ class NotificationManager:
                 "face_verification_timeout": "⚠️ 人脸验证超时",
                 "account_disabled": "⚠️ 账号已自动禁用",
                 "baxia_punish_captcha": "⚠️ 触发风控图形验证",
+                "captcha_failed": "❌ 滑块验证失败",
             }
             
             # 获取通知标题
