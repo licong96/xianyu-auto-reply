@@ -290,48 +290,53 @@ export function PanSyncLogs() {
           )}
         </div>
 
-        {/* 分页 */}
-        <div className="vben-card-footer flex items-center justify-between gap-2 flex-wrap">
-          <label className="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400">
-            每页
-            <select
-              value={pageSize}
-              onChange={(e) => {
-                setPageSize(Number(e.target.value))
-                setPage(1)
-              }}
-              className="input-ios !w-20 !py-1"
-            >
-              {PAGE_SIZE_OPTIONS.map((size) => (
-                <option key={size} value={size}>
-                  {size}
-                </option>
-              ))}
-            </select>
-            条
-          </label>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              disabled={page <= 1 || loading}
-              className="btn-ios-secondary !px-2 !py-1"
-            >
-              <ChevronLeft className="w-4 h-4" />
-              上一页
-            </button>
-            <span className="text-sm text-slate-500 dark:text-slate-400">
-              {page} / {totalPages}
-            </span>
-            <button
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              disabled={page >= totalPages || loading}
-              className="btn-ios-secondary !px-2 !py-1"
-            >
-              下一页
-              <ChevronRight className="w-4 h-4" />
-            </button>
+        {/* 分页（样式对齐监控日志等页面的统一模式） */}
+        {total > 0 && (
+          <div className="flex-shrink-0 vben-card-footer flex flex-col sm:flex-row items-center justify-between gap-4 px-4 py-3 border-t border-slate-200 dark:border-slate-700">
+            <div className="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400">
+              <span>每页</span>
+              <select
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(Number(e.target.value))
+                  setPage(1)
+                }}
+                className="px-2 py-1 border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300"
+              >
+                {PAGE_SIZE_OPTIONS.map((size) => (
+                  <option key={size} value={size}>
+                    {size}
+                  </option>
+                ))}
+              </select>
+              <span>条</span>
+              <span className="ml-2">
+                显示 {(page - 1) * pageSize + 1}-{Math.min(page * pageSize, total)} 条，共 {total} 条
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page <= 1 || loading}
+                className="p-2 rounded border border-slate-300 dark:border-slate-600 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-700"
+                title="上一页"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <span className="px-3 py-1 text-sm text-slate-600 dark:text-slate-400">
+                第 {page} / {totalPages} 页
+              </span>
+              <button
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page >= totalPages || loading}
+                className="p-2 rounded border border-slate-300 dark:border-slate-600 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-700"
+                title="下一页"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   )
