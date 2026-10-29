@@ -22,6 +22,7 @@ from sqlalchemy import select
 from common.db.session import async_session_maker
 from common.models.system_setting import SystemSetting
 from common.models.token_cache import TokenCache
+from common.services.account_notification_dispatch import send_account_notification
 from common.services.im_token_api import (
     extract_im_access_token,
     is_session_expired_token_result,
@@ -58,6 +59,11 @@ from common.utils.token_cache import TokenCacheValidity, classify_token_cache_va
 
 
 STARTUP_EXPIRED_CACHE_REFRESH_JITTER_SECONDS = 120
+
+# 轨迹池告急通知的进程内全局冷却（跨账号，6 小时最多 1 条）
+TRAIL_POOL_NOTIFY_COOLDOWN_SECONDS = 6 * 3600
+_last_trail_pool_notify_at: float = 0.0
+
 
 class CookieTokenManager:
     """Cookie/Token管理器"""
@@ -174,7 +180,39 @@ class CookieTokenManager:
             attachment_path=attachment_path,
             verification_url=verification_url
         )
-    
+
+    async def _notify_trail_pool_low_if_needed(self):
+        """真实鼠标轨迹池可用数低于阈值时发送一条告警（进程内 6 小时全局冷却）。
+
+        池水位由 real_mouse_slider 加载样本时记录；本方法只读状态发通知，
+        任何异常都不影响滑块主流程。
+        """
+        global _last_trail_pool_notify_at
+        try:
+            from common.services.captcha import real_mouse_slider
+            pool = real_mouse_slider.get_trail_pool_state()
+            available = pool.get("available")
+            if available is None:  # 真实鼠标引擎尚未加载过样本（如浏览器模式），不告警
+                return
+            minimum = int(pool.get("min") or 6)
+            if int(available) >= minimum:
+                return
+            now = time.time()
+            if now - _last_trail_pool_notify_at < TRAIL_POOL_NOTIFY_COOLDOWN_SECONDS:
+                return
+            _last_trail_pool_notify_at = now
+            await send_account_notification(
+                self.cookie_id,
+                "⚠️ 真人轨迹池告急",
+                f"真实鼠标滑块轨迹池可用样本仅剩 {available} 条"
+                f"（阈值 {minimum}，场景 {pool.get('scene') or 'unknown'}），"
+                f"请尽快补采 human_trails 新样本",
+                notification_type="trail_pool_low",
+                cooldown_seconds=0,  # 冷却由本模块全局时间戳统一控制
+            )
+        except Exception as pool_e:
+            logger.warning(f"【{self.cookie_id}】轨迹池告急检查失败（忽略）: {self._safe_str(pool_e)}")
+
     async def restart_instance(self, reason=None):
         return await self.parent.restart_instance(reason)
 
@@ -784,6 +822,9 @@ class CookieTokenManager:
                 # _m_h5_tk）。浏览器流程结束后统一写回，不能只在 token_ok 分支处理。
                 await _persist_refetched_cookie_updates()
 
+                # 真实鼠标轨迹池水位检查：池告急时发一条告警（6h 全局冷却），失败不影响主流程
+                await self._notify_trail_pool_low_if_needed()
+
                 # 重取链接时发现 token 已可用（风控解除，无需滑块）：直接采用，跳过滑块结果处理。
                 # The outer refresh_token() consumes _refetch_new_token first. A
                 # cookie-only result is the only case that needs a token retry.
@@ -1123,6 +1164,27 @@ class CookieTokenManager:
         notification_sent = False
         
         try:
+            # 环境探测（锁屏/RDP 断开）：不可交互时静默跳过本次刷新——
+            # 不触碰 Token 接口、不触发滑块、不产生风控日志；恢复后下一轮自动正常。
+            env_reason = None
+            try:
+                from common.services.captcha.desktop_env import env_block_reason
+                env_reason = env_block_reason()
+            except Exception as env_e:
+                logger.warning(f"【{self.cookie_id}】环境探测异常（按可用处理）: {self._safe_str(env_e)}")
+            if env_reason:
+                self.last_token_refresh_status = "skipped_env_not_interactive"
+                logger.info(
+                    f"【{self.cookie_id}】环境不可交互（{env_reason}，锁屏或远程桌面断开），"
+                    f"跳过本次Token刷新，恢复后自动继续"
+                )
+                await self.send_token_refresh_notification(
+                    f"Token刷新暂停：检测到环境不可交互（{env_reason}，锁屏或远程桌面断开），"
+                    f"已自动跳过，环境恢复后将自动继续",
+                    "env_not_interactive",
+                )
+                return None
+
             # 检查账号是否已禁用
             from app.services.captcha.concurrency import should_skip_account
             if should_skip_account(self.cookie_id):

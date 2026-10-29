@@ -162,6 +162,17 @@ def _trails_dir() -> str:
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), "human_trails")
 
 
+# 轨迹池水位：最近一次 _load_drags 的可用样本数（available=None 表示尚未加载过，
+# 供异步上层读取后做"池告急"告警；仅在真实鼠标引擎实际加载样本后才有值）。
+TRAIL_POOL_MIN = 6
+_last_pool_state: dict = {"scene": "", "available": None, "min": TRAIL_POOL_MIN}
+
+
+def get_trail_pool_state() -> dict:
+    """返回最近一次加载的轨迹池状态；available < min 即告急，available=None 表示未知。"""
+    return dict(_last_pool_state)
+
+
 def _detect_scene(url: str) -> str:
     """按验证链接 URL 判滑块场景：登录滑块 vs 业务滑块。
 
@@ -1252,6 +1263,7 @@ def run_real_mouse_verification(
     # 按 URL 自动判场景：登录滑块用登录轨迹并强制最大化；业务滑块保持原有行为
     scene = _detect_scene(url)
     drags = _load_drags(scene)
+    _last_pool_state.update({"scene": scene, "available": len(drags), "min": TRAIL_POOL_MIN})
     if not drags:
         sample = "human_trail_login_*.json" if scene == "login" else "human_trail_pass_*.json"
         logger.error(f"真实鼠标引擎缺少真人轨迹样本（human_trails/{sample}，scene={scene}）")

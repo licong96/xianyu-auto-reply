@@ -1,4 +1,4 @@
-﻿"""
+"""
 Token管理模块
 
 功能:
@@ -140,10 +140,13 @@ class TokenManager:
                     "skipped_risk_control_processing",
                     "skipped_risk_control_check_failed",
                     "skipped_startup_cache_lookup_failed",
+                    "skipped_env_not_interactive",
                 ):
                     self.last_cookie_refresh_time = time.time()
                     refresh_status = self.xianyu.last_token_refresh_status
-                    if refresh_status == "skipped_local_slider_disabled":
+                    if refresh_status == "skipped_env_not_interactive":
+                        reason = "环境不可交互（锁屏/远程桌面断开），本轮静默跳过"
+                    elif refresh_status == "skipped_local_slider_disabled":
                         reason = "Token接口仍需滑块，但本机滑块不处理已开启"
                     elif refresh_status == "skipped_local_slider_config_unavailable":
                         reason = "本机滑块处理开关读取失败"

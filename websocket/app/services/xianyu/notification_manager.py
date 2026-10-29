@@ -316,6 +316,7 @@ class NotificationManager:
                 "account_disabled": "⚠️ 账号已自动禁用",
                 "baxia_punish_captcha": "⚠️ 触发风控图形验证",
                 "captcha_failed": "❌ 滑块验证失败",
+                "env_not_interactive": "⚠️ 环境不可交互（锁屏/远程断开）",
             }
             
             # 获取通知标题
@@ -397,6 +398,7 @@ class NotificationManager:
         token_error_keywords = [
             'Token刷新失败', 'Token刷新异常', 'token刷新失败', 'token刷新异常',
             'TOKEN刷新失败', 'TOKEN刷新异常',
+            'Token刷新暂停', '环境不可交互',
             'FAIL_SYS_USER_VALIDATE', 'RGV587_ERROR',
             '哎哟喂,被挤爆啦', '请稍后重试',
             'punish?x5secdata', 'captcha',
