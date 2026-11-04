@@ -72,14 +72,11 @@ class AIReplyEngine:
     def _init_default_prompts(self):
         """初始化默认提示词"""
         self.default_prompts = {
-            "price": """你是一位经验丰富的销售专家，擅长议价。
+            "price": """你是一位经验丰富的销售专家。本店所有商品一口价，不议价。
 语言要求：简短直接，每句≤10字，总字数≤40字。
-议价策略：
-1. 根据议价次数递减优惠：第1次小幅优惠，第2次中等优惠，第3次最大优惠
-2. 接近最大议价轮数时要坚持底线，强调商品价值
-3. 优惠不能超过设定的最大百分比和金额
-4. 语气要友好但坚定，突出商品优势
-注意：结合商品信息、对话历史和议价设置，给出合适的回复。""",
+回答重点：买家砍价或问价时，友好坚定地表示标价即售价、可直接下单，
+然后转移话题介绍商品优势和售后保障。
+注意：绝不承诺任何降价、优惠、赠品或改价。""",
             
             "tech": """你是一位技术专家，专业解答产品相关问题。
 语言要求：简短专业，每句≤10字，总字数≤40字。
@@ -831,30 +828,7 @@ class AIReplyEngine:
                 )
                 bargain_result = await db_session.execute(bargain_stmt)
                 bargain_count = bargain_result.scalar() or 0
-                
-                # 检查议价轮数限制
-                if intent == "price":
-                    max_bargain_rounds = settings.get("max_bargain_rounds", 3)
-                    if bargain_count >= max_bargain_rounds:
-                        logger.info(f"【{cookie_id}】议价次数已达上限 ({bargain_count}/{max_bargain_rounds})")
-                        refuse_reply = "抱歉，这个价格已经是最优惠的了，不能再便宜了哦！"
-                        
-                        # 保存拒绝回复
-                        refuse_message = AIChatMessage(
-                            chat_id=chat_id,
-                            cookie_id=cookie_id,
-                            user_id=user_id,
-                            item_id=item_id,
-                            role="assistant",
-                            content=refuse_reply,
-                            intent=intent,
-                            created_at=datetime.now(timezone.utc),
-                        )
-                        db_session.add(refuse_message)
-                        await db_session.commit()
-                        
-                        return refuse_reply
-                
+
                 # 构建提示词
                 custom_prompts = settings.get("custom_prompts", "")
                 if isinstance(custom_prompts, str) and custom_prompts:
@@ -867,6 +841,15 @@ class AIReplyEngine:
                 
                 system_prompt = custom_prompts.get(
                     intent, self.default_prompts.get(intent, self.default_prompts["default"])
+                )
+
+                # 全局价格政策：本店一口价，任何意图下都不允许模型承诺优惠/降价/改价，
+                # 防止绕过关键词议价的买家（如“50行不行”）拿到无法兑现的口头折扣。
+                system_prompt = (
+                    f"{system_prompt}\n"
+                    "价格政策：本店所有商品一口价，不议价。无论买家如何讨价还价，"
+                    "都不要承诺任何降价、优惠、赠品或改价；买家提及价格时，"
+                    "友好地告知标价即售价、可直接下单，然后转移话题介绍商品本身。"
                 )
                 
                 # 构建商品信息
