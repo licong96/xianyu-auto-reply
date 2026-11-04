@@ -199,9 +199,6 @@ export function Accounts() {
   const [aiApiUrl, setAiApiUrl] = useState('')
   const [aiApiKey, setAiApiKey] = useState('')
   const [aiModelName, setAiModelName] = useState('')
-  const [aiMaxDiscountPercent, setAiMaxDiscountPercent] = useState(10)
-  const [aiMaxDiscountAmount, setAiMaxDiscountAmount] = useState(100)
-  const [aiMaxBargainRounds, setAiMaxBargainRounds] = useState(3)
   const [aiCustomPrompts, setAiCustomPrompts] = useState('')
   const [aiTimeRangeStart, setAiTimeRangeStart] = useState('')
   const [aiTimeRangeEnd, setAiTimeRangeEnd] = useState('')
@@ -1440,9 +1437,6 @@ export function Accounts() {
       setAiApiUrl(settings.base_url ?? AI_PROVIDER_DEFAULT_BASE_URLS[providerType])
       setAiApiKey(settings.api_key ?? '')
       setAiModelName(settings.model_name ?? 'qwen-plus')
-      setAiMaxDiscountPercent(settings.max_discount_percent ?? 10)
-      setAiMaxDiscountAmount(settings.max_discount_amount ?? 100)
-      setAiMaxBargainRounds(settings.max_bargain_rounds ?? 3)
       setAiCustomPrompts(settings.custom_prompts ?? '')
       const formatTime = (t: string | undefined | null) => {
         if (!t) return ''
@@ -1553,9 +1547,6 @@ export function Accounts() {
         base_url: aiApiUrl,
         api_key: aiApiKey,
         model_name: aiModelName,
-        max_discount_percent: aiMaxDiscountPercent,
-        max_discount_amount: aiMaxDiscountAmount,
-        max_bargain_rounds: aiMaxBargainRounds,
         custom_prompts: aiCustomPrompts,
         ai_time_range_start: aiTimeRangeStart,
         ai_time_range_end: aiTimeRangeEnd,
@@ -1598,9 +1589,6 @@ export function Accounts() {
         base_url: aiApiUrl,
         api_key: aiApiKey,
         model_name: aiModelName,
-        max_discount_percent: aiMaxDiscountPercent,
-        max_discount_amount: aiMaxDiscountAmount,
-        max_bargain_rounds: aiMaxBargainRounds,
         custom_prompts: aiCustomPrompts,
         ai_time_range_start: aiTimeRangeStart,
         ai_time_range_end: aiTimeRangeEnd,
@@ -3860,45 +3848,6 @@ export function Accounts() {
                     </div>
                   </div>
 
-                  {/* 议价设置 */}
-                  <div className="border-t border-slate-200 dark:border-slate-700 pt-4">
-                    <h3 className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-3">议价设置</h3>
-                    <div className="grid grid-cols-3 gap-3">
-                      <div className="input-group">
-                        <label className="input-label text-xs">最大折扣(%)</label>
-                        <input
-                          type="number"
-                          value={aiMaxDiscountPercent}
-                          onChange={(e) => setAiMaxDiscountPercent(Number(e.target.value))}
-                          className="input-ios"
-                          min="0"
-                          max="100"
-                        />
-                      </div>
-                      <div className="input-group">
-                        <label className="input-label text-xs">最大减价(元)</label>
-                        <input
-                          type="number"
-                          value={aiMaxDiscountAmount}
-                          onChange={(e) => setAiMaxDiscountAmount(Number(e.target.value))}
-                          className="input-ios"
-                          min="0"
-                        />
-                      </div>
-                      <div className="input-group">
-                        <label className="input-label text-xs">最大议价轮数</label>
-                        <input
-                          type="number"
-                          value={aiMaxBargainRounds}
-                          onChange={(e) => setAiMaxBargainRounds(Number(e.target.value))}
-                          className="input-ios"
-                          min="1"
-                          max="10"
-                        />
-                      </div>
-                    </div>
-                  </div>
-
                   {/* 自定义提示词 */}
                   <div className="input-group">
                     <label className="input-label">自定义提示词 (JSON格式)</label>
@@ -3906,7 +3855,7 @@ export function Accounts() {
                       value={aiCustomPrompts}
                       onChange={(e) => setAiCustomPrompts(e.target.value)}
                       className="input-ios h-24 resize-none font-mono text-xs"
-                      placeholder='{"classify": "分类提示词", "price": "议价提示词", "tech": "技术提示词", "default": "默认提示词"}'
+                      placeholder='{"classify": "分类提示词", "price": "价格话术", "tech": "技术提示词", "default": "默认提示词"}'
                     />
                     <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                       留空使用系统默认提示词

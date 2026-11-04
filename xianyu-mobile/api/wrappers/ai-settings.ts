@@ -33,7 +33,6 @@ export interface AIReplySettings {
   model_name?: string;
   api_key?: string;
   base_url?: string;
-  max_bargain_rounds?: number;
   custom_prompts?: string;
   ai_time_range_start?: string;
   ai_time_range_end?: string;

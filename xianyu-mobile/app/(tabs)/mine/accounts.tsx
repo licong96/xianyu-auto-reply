@@ -432,7 +432,6 @@ export default function AccountsScreen() {
   const [aiApiUrl, setAiApiUrl] = useState('');
   const [aiApiKey, setAiApiKey] = useState('');
   const [aiModel, setAiModel] = useState('');
-  const [aiBargainRounds, setAiBargainRounds] = useState('3');
   const [aiPrompts, setAiPrompts] = useState('');
   const [aiTimeStart, setAiTimeStart] = useState('');
   const [aiTimeEnd, setAiTimeEnd] = useState('');
@@ -955,7 +954,6 @@ export default function AccountsScreen() {
     setAiApiUrl('');
     setAiApiKey('');
     setAiModel('');
-    setAiBargainRounds('3');
     setAiPrompts('');
     setAiTimeStart('');
     setAiTimeEnd('');
@@ -968,7 +966,6 @@ export default function AccountsScreen() {
         setAiApiUrl(s.base_url ?? AI_PROVIDER_DEFAULT_BASE_URLS[provider]);
         setAiApiKey(s.api_key ?? '');
         setAiModel(s.model_name ?? '');
-        setAiBargainRounds(String(s.max_bargain_rounds ?? 3));
         setAiPrompts(s.custom_prompts ?? '');
         setAiTimeStart(s.ai_time_range_start ?? '');
         setAiTimeEnd(s.ai_time_range_end ?? '');
@@ -1006,7 +1003,6 @@ export default function AccountsScreen() {
       base_url: aiApiUrl.trim(),
       api_key: aiApiKey,
       model_name: aiModel.trim(),
-      max_bargain_rounds: Number(aiBargainRounds) || 0,
       custom_prompts: aiPrompts,
       ai_time_range_start: aiTimeStart.trim(),
       ai_time_range_end: aiTimeEnd.trim(),
@@ -2168,16 +2164,6 @@ export default function AccountsScreen() {
                   placeholder="如 qwen-plus"
                   autoCapitalize="none"
                   autoCorrect={false}
-                />
-              </View>
-
-              <View style={styles.fieldGroup}>
-                <Text style={[styles.fieldLabel, { color: c.textSecondary }]}>砍价轮数</Text>
-                <Input
-                  value={aiBargainRounds}
-                  onChangeText={setAiBargainRounds}
-                  placeholder="3"
-                  keyboardType="number-pad"
                 />
               </View>
 

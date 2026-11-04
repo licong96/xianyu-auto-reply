@@ -476,9 +476,6 @@ export interface AIReplySettings {
   model_name?: string
   api_key?: string
   base_url?: string
-  max_discount_percent?: number
-  max_discount_amount?: number
-  max_bargain_rounds?: number
   custom_prompts?: string
   ai_time_range_start?: string
   ai_time_range_end?: string
@@ -514,9 +511,6 @@ export const updateAIReplySettings = (cookieId: string, settings: Partial<AIRepl
   if (settings.model_name !== undefined) payload.model_name = settings.model_name
   if (settings.api_key !== undefined) payload.api_key = settings.api_key
   if (settings.base_url !== undefined) payload.base_url = settings.base_url
-  if (settings.max_discount_percent !== undefined) payload.max_discount_percent = settings.max_discount_percent
-  if (settings.max_discount_amount !== undefined) payload.max_discount_amount = settings.max_discount_amount
-  if (settings.max_bargain_rounds !== undefined) payload.max_bargain_rounds = settings.max_bargain_rounds
   if (settings.custom_prompts !== undefined) payload.custom_prompts = settings.custom_prompts
   if (settings.ai_time_range_start !== undefined) payload.ai_time_range_start = settings.ai_time_range_start
   if (settings.ai_time_range_end !== undefined) payload.ai_time_range_end = settings.ai_time_range_end
