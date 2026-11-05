@@ -2176,7 +2176,7 @@ export default function AccountsScreen() {
                 <Input
                   value={aiShopPrompt}
                   onChangeText={setAiShopPrompt}
-                  placeholder="例：拍下后系统自动发送下载链接，几分钟内收到；售出不支持退款。"
+                  placeholder="已默认填好本店通用内容（虚拟商品/双网盘/无物流），可直接修改"
                   multiline
                   style={styles.textarea}
                 />
