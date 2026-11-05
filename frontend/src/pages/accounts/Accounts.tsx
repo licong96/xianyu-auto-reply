@@ -90,6 +90,26 @@ const getAIConfigIncompleteMessage = (missingItems: string[]): string => (
   `AI配置未填写完整，请先补全：${missingItems.join('、')}`
 )
 
+// 系统默认提示词，与 websocket/app/services/xianyu/ai_reply_engine.py 中
+// _init_default_prompts 保持一致；修改引擎默认值时请同步此处。
+const SYSTEM_DEFAULT_PROMPTS: Record<string, string> = {
+  _global: '',
+  unified: `你是一位热情专业的闲鱼卖家客服，负责接待买家咨询并促成下单。
+
+根据买家消息的情境，采用对应的回答策略：
+1. 买家砍价或问价：友好坚定地表示本店一口价、标价即售价、可直接下单，然后转移话题介绍商品优势或售后保障。绝不承诺任何降价、优惠、赠品或改价。
+示例——买家：便宜点，60卖不卖？
+你：亲，小店都是一口价不议价哦～这个很多买家反馈很值，可以直接拍，早买早用！
+2. 买家询问商品功能、用法、参数：耐心准确地基于商品信息回答，不确定的内容不要编造。
+示例——买家：这个手机上能看吗？
+你：手机和电脑都可以看的，下单后自动发链接，点开就能用～
+3. 其他问题（发货、售后、闲聊等）：热情友好地解答，优先根据商品信息回答，适时促成下单。
+示例——买家：什么时候发货？
+你：拍下后系统自动发货，几分钟内就能收到，不用等哦～
+
+语言要求：口语化，像真实卖家在闲鱼上聊天，总字数≤80字。`,
+}
+
 export function Accounts() {
   const { addToast } = useUIStore()
   const { isAuthenticated, token, user, _hasHydrated } = useAuthStore()
@@ -199,7 +219,10 @@ export function Accounts() {
   const [aiApiUrl, setAiApiUrl] = useState('')
   const [aiApiKey, setAiApiKey] = useState('')
   const [aiModelName, setAiModelName] = useState('')
-  const [aiCustomPrompts, setAiCustomPrompts] = useState('')
+  const [aiCustomGlobal, setAiCustomGlobal] = useState('')
+  const [aiCustomUnified, setAiCustomUnified] = useState('')
+  const [aiShopPrompt, setAiShopPrompt] = useState('')
+  const [showAdvancedAiSettings, setShowAdvancedAiSettings] = useState(false)
   const [aiTimeRangeStart, setAiTimeRangeStart] = useState('')
   const [aiTimeRangeEnd, setAiTimeRangeEnd] = useState('')
   const [aiManualReplyPauseEnabled, setAiManualReplyPauseEnabled] = useState(false)
@@ -1437,7 +1460,22 @@ export function Accounts() {
       setAiApiUrl(settings.base_url ?? AI_PROVIDER_DEFAULT_BASE_URLS[providerType])
       setAiApiKey(settings.api_key ?? '')
       setAiModelName(settings.model_name ?? 'qwen-plus')
-      setAiCustomPrompts(settings.custom_prompts ?? '')
+      // 自定义提示词：解析 JSON 到分 key 状态，解析失败则全部留空（=使用系统默认）。
+      // unified 优先，兼容历史配置里的 default（原默认意图话术）
+      setAiCustomGlobal('')
+      setAiCustomUnified('')
+      try {
+        const parsed = settings.custom_prompts ? JSON.parse(settings.custom_prompts) : {}
+        if (parsed && typeof parsed === 'object') {
+          if (typeof parsed._global === 'string') setAiCustomGlobal(parsed._global)
+          const unified = typeof parsed.unified === 'string' ? parsed.unified
+            : typeof parsed.default === 'string' ? parsed.default : ''
+          setAiCustomUnified(unified)
+        }
+      } catch {
+        // 非法 JSON，忽略自定义内容
+      }
+      setAiShopPrompt(settings.shop_prompt ?? '')
       const formatTime = (t: string | undefined | null) => {
         if (!t) return ''
         const parts = t.split(':')
@@ -1530,6 +1568,14 @@ export function Accounts() {
     }
   }
 
+  // 将分 key 的自定义提示词组装回 JSON 字符串；全空则返回空串（=恢复系统默认）
+  const buildCustomPromptsPayload = (): string => {
+    const obj: Record<string, string> = {}
+    if (aiCustomGlobal.trim()) obj._global = aiCustomGlobal.trim()
+    if (aiCustomUnified.trim()) obj.unified = aiCustomUnified.trim()
+    return Object.keys(obj).length ? JSON.stringify(obj) : ''
+  }
+
   const handleSaveAISettings = async () => {
     if (!aiSettingsAccount) return
     if (aiEnabled) {
@@ -1547,7 +1593,8 @@ export function Accounts() {
         base_url: aiApiUrl,
         api_key: aiApiKey,
         model_name: aiModelName,
-        custom_prompts: aiCustomPrompts,
+        custom_prompts: buildCustomPromptsPayload(),
+        shop_prompt: aiShopPrompt,
         ai_time_range_start: aiTimeRangeStart,
         ai_time_range_end: aiTimeRangeEnd,
         manual_reply_ai_pause_enabled: aiManualReplyPauseEnabled,
@@ -1589,7 +1636,8 @@ export function Accounts() {
         base_url: aiApiUrl,
         api_key: aiApiKey,
         model_name: aiModelName,
-        custom_prompts: aiCustomPrompts,
+        custom_prompts: buildCustomPromptsPayload(),
+        shop_prompt: aiShopPrompt,
         ai_time_range_start: aiTimeRangeStart,
         ai_time_range_end: aiTimeRangeEnd,
         manual_reply_ai_pause_enabled: aiManualReplyPauseEnabled,
@@ -3848,18 +3896,56 @@ export function Accounts() {
                     </div>
                   </div>
 
-                  {/* 自定义提示词 */}
+                  {/* 店铺说明（T2 店铺层，对该账号所有商品生效） */}
                   <div className="input-group">
-                    <label className="input-label">自定义提示词 (JSON格式)</label>
+                    <label className="input-label">店铺说明（对该账号所有商品生效）</label>
                     <textarea
-                      value={aiCustomPrompts}
-                      onChange={(e) => setAiCustomPrompts(e.target.value)}
-                      className="input-ios h-24 resize-none font-mono text-xs"
-                      placeholder='{"classify": "分类提示词", "price": "价格话术", "tech": "技术提示词", "default": "默认提示词"}'
+                      value={aiShopPrompt}
+                      onChange={(e) => setAiShopPrompt(e.target.value)}
+                      className="input-ios h-24 resize-none"
+                      placeholder="例：本店出售虚拟学习资料，拍下后系统自动发送下载链接，几分钟内即可收到；商品一经售出不支持退款，介意勿拍。"
                     />
                     <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                      留空使用系统默认提示词
+                      填写后 AI 客服在回答任何商品的问题时都会知道这些内容，留空则不生效
                     </p>
+                  </div>
+
+                  {/* 高级设置：自定义提示词 JSON（按需展开） */}
+                  <div className="input-group">
+                    <button
+                      type="button"
+                      onClick={() => setShowAdvancedAiSettings(prev => !prev)}
+                      className="text-xs text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 flex items-center gap-1"
+                    >
+                      <span>{showAdvancedAiSettings ? '▾' : '▸'}</span>
+                      高级设置（自定义规则与话术，一般无需修改）
+                    </button>
+                    {showAdvancedAiSettings && (
+                      <div className="space-y-3 mt-2">
+                        {([
+                          { key: '_global', label: '全店通用规则', hint: '追加在系统规则之后，对所有问题生效', value: aiCustomGlobal, onChange: setAiCustomGlobal },
+                          { key: 'unified', label: '统一话术覆盖', hint: '整体替换系统默认话术，模型会自行判断买家情境（砍价/技术/日常）', value: aiCustomUnified, onChange: setAiCustomUnified },
+                        ]).map(field => (
+                          <div key={field.key} className="input-group">
+                            <label className="input-label text-xs">{field.label}（留空使用系统默认）</label>
+                            <textarea
+                              value={field.value}
+                              onChange={(e) => field.onChange(e.target.value)}
+                              className="input-ios h-20 resize-none text-xs"
+                              placeholder={field.hint}
+                            />
+                            {SYSTEM_DEFAULT_PROMPTS[field.key] && (
+                              <details className="text-xs text-slate-400 mt-1">
+                                <summary className="cursor-pointer hover:text-slate-600 dark:hover:text-slate-300">查看系统默认内容</summary>
+                                <pre className="whitespace-pre-wrap mt-1 p-2 bg-slate-50 dark:bg-slate-800/50 rounded text-slate-500 dark:text-slate-400 font-mono">
+                                  {SYSTEM_DEFAULT_PROMPTS[field.key]}
+                                </pre>
+                              </details>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   {/* 配置提示 */}

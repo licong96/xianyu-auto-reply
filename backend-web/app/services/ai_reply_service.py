@@ -31,6 +31,7 @@ DEFAULT_AI_SETTINGS = {
     "max_discount_amount": 100,
     "max_bargain_rounds": 3,
     "custom_prompts": "",
+    "shop_prompt": "",
     "ai_time_range_start": "",
     "ai_time_range_end": "",
     "manual_reply_ai_pause_enabled": False,
@@ -61,6 +62,7 @@ class AIReplySettingsService:
         payload["api_key"] = clean_ai_text(payload.get("api_key"))
         payload["base_url"] = clean_ai_text(payload.get("base_url"))
         payload["custom_prompts"] = payload.get("custom_prompts") or ""
+        payload["shop_prompt"] = clean_ai_text(payload.get("shop_prompt"))
         payload["ai_time_range_start"] = payload.get("ai_time_range_start") or ""
         payload["ai_time_range_end"] = payload.get("ai_time_range_end") or ""
         payload["manual_reply_ai_pause_enabled"] = bool(
@@ -104,6 +106,8 @@ class AIReplySettingsService:
             merged["max_bargain_rounds"] = int(payload.get("max_bargain_rounds", 3) or 0)
         if "custom_prompts" in payload:
             merged["custom_prompts"] = payload.get("custom_prompts") or ""
+        if "shop_prompt" in payload:
+            merged["shop_prompt"] = clean_ai_text(payload.get("shop_prompt"))
         if "ai_time_range_start" in payload:
             merged["ai_time_range_start"] = payload.get("ai_time_range_start") or ""
         if "ai_time_range_end" in payload:

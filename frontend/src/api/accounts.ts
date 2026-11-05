@@ -477,6 +477,7 @@ export interface AIReplySettings {
   api_key?: string
   base_url?: string
   custom_prompts?: string
+  shop_prompt?: string
   ai_time_range_start?: string
   ai_time_range_end?: string
   manual_reply_ai_pause_enabled?: boolean
@@ -512,6 +513,7 @@ export const updateAIReplySettings = (cookieId: string, settings: Partial<AIRepl
   if (settings.api_key !== undefined) payload.api_key = settings.api_key
   if (settings.base_url !== undefined) payload.base_url = settings.base_url
   if (settings.custom_prompts !== undefined) payload.custom_prompts = settings.custom_prompts
+  if (settings.shop_prompt !== undefined) payload.shop_prompt = settings.shop_prompt
   if (settings.ai_time_range_start !== undefined) payload.ai_time_range_start = settings.ai_time_range_start
   if (settings.ai_time_range_end !== undefined) payload.ai_time_range_end = settings.ai_time_range_end
   if (settings.manual_reply_ai_pause_enabled !== undefined) {

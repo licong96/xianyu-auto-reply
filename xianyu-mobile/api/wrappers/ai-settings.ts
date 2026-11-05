@@ -34,6 +34,7 @@ export interface AIReplySettings {
   api_key?: string;
   base_url?: string;
   custom_prompts?: string;
+  shop_prompt?: string;
   ai_time_range_start?: string;
   ai_time_range_end?: string;
   // 兼容旧字段

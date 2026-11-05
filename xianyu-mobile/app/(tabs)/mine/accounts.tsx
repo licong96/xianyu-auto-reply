@@ -433,6 +433,7 @@ export default function AccountsScreen() {
   const [aiApiKey, setAiApiKey] = useState('');
   const [aiModel, setAiModel] = useState('');
   const [aiPrompts, setAiPrompts] = useState('');
+  const [aiShopPrompt, setAiShopPrompt] = useState('');
   const [aiTimeStart, setAiTimeStart] = useState('');
   const [aiTimeEnd, setAiTimeEnd] = useState('');
 
@@ -955,6 +956,7 @@ export default function AccountsScreen() {
     setAiApiKey('');
     setAiModel('');
     setAiPrompts('');
+    setAiShopPrompt('');
     setAiTimeStart('');
     setAiTimeEnd('');
     getAccountAiSettings(account.id)
@@ -967,6 +969,7 @@ export default function AccountsScreen() {
         setAiApiKey(s.api_key ?? '');
         setAiModel(s.model_name ?? '');
         setAiPrompts(s.custom_prompts ?? '');
+        setAiShopPrompt(s.shop_prompt ?? '');
         setAiTimeStart(s.ai_time_range_start ?? '');
         setAiTimeEnd(s.ai_time_range_end ?? '');
       })
@@ -1004,6 +1007,7 @@ export default function AccountsScreen() {
       api_key: aiApiKey,
       model_name: aiModel.trim(),
       custom_prompts: aiPrompts,
+      shop_prompt: aiShopPrompt.trim(),
       ai_time_range_start: aiTimeStart.trim(),
       ai_time_range_end: aiTimeEnd.trim(),
     };
@@ -2164,6 +2168,17 @@ export default function AccountsScreen() {
                   placeholder="如 qwen-plus"
                   autoCapitalize="none"
                   autoCorrect={false}
+                />
+              </View>
+
+              <View style={styles.fieldGroup}>
+                <Text style={[styles.fieldLabel, { color: c.textSecondary }]}>店铺说明（对该账号所有商品生效）</Text>
+                <Input
+                  value={aiShopPrompt}
+                  onChangeText={setAiShopPrompt}
+                  placeholder="例：拍下后系统自动发送下载链接，几分钟内收到；售出不支持退款。"
+                  multiline
+                  style={styles.textarea}
                 />
               </View>
 
