@@ -32,6 +32,7 @@ from app.services.scheduler.token_renewal_task import token_renewal_task_service
 from app.services.scheduler.cookies_refresh_task import cookies_refresh_task_service
 from app.services.scheduler.api_cookie_renew_task import api_cookie_renew_task_service
 from app.services.scheduler.close_notice_task import close_notice_task_service
+from app.services.scheduler.material_pool_live_task import material_pool_live_task_service
 from app.services.scheduler.red_flower_task import RedFlowerTask
 from app.services.scheduler.db_backup_task import db_backup_task_service
 from app.services.scheduler.delivery_timeout_task import delivery_timeout_task_service
@@ -67,6 +68,7 @@ from app.services.scheduled_task_service import (
     TASK_CODE_AUTO_ORDER,
     TASK_CODE_IMAGE_CLEANUP,
     TASK_CODE_AUTO_RELIST,
+    TASK_CODE_MATERIAL_POOL_LIVE,
 )
 from common.db.session import async_session_maker
 
@@ -93,6 +95,7 @@ class SchedulerService:
         self._cookies_refresh_task_handle: Optional[asyncio.Task] = None
         self._api_cookie_renew_task_handle: Optional[asyncio.Task] = None
         self._close_notice_task_handle: Optional[asyncio.Task] = None
+        self._material_pool_live_task_handle: Optional[asyncio.Task] = None
         self._red_flower_task_handle: Optional[asyncio.Task] = None
         self._db_backup_task_handle: Optional[asyncio.Task] = None
         self._delivery_timeout_task_handle: Optional[asyncio.Task] = None
@@ -117,6 +120,7 @@ class SchedulerService:
         self._cookies_refresh_task = cookies_refresh_task_service
         self._api_cookie_renew_task = api_cookie_renew_task_service
         self._close_notice_task = close_notice_task_service
+        self._material_pool_live_task = material_pool_live_task_service
         self._red_flower_task = RedFlowerTask()
         self._db_backup_task = db_backup_task_service
         self._delivery_timeout_task = delivery_timeout_task_service
@@ -154,7 +158,7 @@ class SchedulerService:
     
     async def reload_all_configs(self) -> None:
         """重新加载所有任务配置"""
-        for task_code in [TASK_CODE_REDELIVERY, TASK_CODE_RATE, TASK_CODE_POLISH, TASK_CODE_DAY_SWITCH, TASK_CODE_CLEANUP_BROWSER_DATA, TASK_CODE_CLEANUP_UNCONFIGURED_BROWSER_DATA, TASK_CODE_FETCH_ORDERS, TASK_CODE_FETCH_PENDING_ORDERS, TASK_CODE_FETCH_REFUND_ORDERS, TASK_CODE_FETCH_ITEMS, TASK_CODE_LOGIN_RENEW, TASK_CODE_TOKEN_RENEWAL, TASK_CODE_COOKIES_REFRESH, TASK_CODE_API_COOKIE_RENEW, TASK_CODE_CLOSE_NOTICE, TASK_CODE_RED_FLOWER, TASK_CODE_DB_BACKUP]:
+        for task_code in [TASK_CODE_REDELIVERY, TASK_CODE_RATE, TASK_CODE_POLISH, TASK_CODE_DAY_SWITCH, TASK_CODE_CLEANUP_BROWSER_DATA, TASK_CODE_CLEANUP_UNCONFIGURED_BROWSER_DATA, TASK_CODE_FETCH_ORDERS, TASK_CODE_FETCH_PENDING_ORDERS, TASK_CODE_FETCH_REFUND_ORDERS, TASK_CODE_FETCH_ITEMS, TASK_CODE_LOGIN_RENEW, TASK_CODE_TOKEN_RENEWAL, TASK_CODE_COOKIES_REFRESH, TASK_CODE_API_COOKIE_RENEW, TASK_CODE_CLOSE_NOTICE, TASK_CODE_RED_FLOWER, TASK_CODE_DB_BACKUP, TASK_CODE_MATERIAL_POOL_LIVE]:
             await self.reload_task_config(task_code)
         for task_code in [TASK_CODE_DELIVERY_TIMEOUT, TASK_CODE_LISTING_MONITOR, TASK_CODE_SELLER_FILL, TASK_CODE_DM_SEND, TASK_CODE_AUTO_ORDER]:
             await self.reload_task_config(task_code)
@@ -184,6 +188,7 @@ class SchedulerService:
         self._cookies_refresh_task_handle = asyncio.create_task(self._run_cookies_refresh_loop())
         self._api_cookie_renew_task_handle = asyncio.create_task(self._run_api_cookie_renew_loop())
         self._close_notice_task_handle = asyncio.create_task(self._run_close_notice_loop())
+        self._material_pool_live_task_handle = asyncio.create_task(self._run_material_pool_live_loop())
         self._red_flower_task_handle = asyncio.create_task(self._run_red_flower_loop())
         self._db_backup_task_handle = asyncio.create_task(self._run_db_backup_loop())
         self._delivery_timeout_task_handle = asyncio.create_task(self._run_delivery_timeout_loop())
@@ -247,6 +252,9 @@ class SchedulerService:
         if self._close_notice_task_handle:
             self._close_notice_task_handle.cancel()
             self._close_notice_task_handle = None
+        if self._material_pool_live_task_handle:
+            self._material_pool_live_task_handle.cancel()
+            self._material_pool_live_task_handle = None
         if self._red_flower_task_handle:
             self._red_flower_task_handle.cancel()
             self._red_flower_task_handle = None
@@ -293,6 +301,7 @@ class SchedulerService:
         cookies_refresh_config = ScheduledTaskService.get_cached_config(TASK_CODE_COOKIES_REFRESH)
         api_cookie_renew_config = ScheduledTaskService.get_cached_config(TASK_CODE_API_COOKIE_RENEW)
         close_notice_config = ScheduledTaskService.get_cached_config(TASK_CODE_CLOSE_NOTICE)
+        material_pool_live_config = ScheduledTaskService.get_cached_config(TASK_CODE_MATERIAL_POOL_LIVE)
         red_flower_config = ScheduledTaskService.get_cached_config(TASK_CODE_RED_FLOWER)
         db_backup_config = ScheduledTaskService.get_cached_config(TASK_CODE_DB_BACKUP)
         delivery_timeout_config = ScheduledTaskService.get_cached_config(TASK_CODE_DELIVERY_TIMEOUT)
@@ -409,6 +418,13 @@ class SchedulerService:
                     "task_running": (
                         self._close_notice_task_handle is not None 
                         and not self._close_notice_task_handle.done()
+                    ),
+                },
+                TASK_CODE_MATERIAL_POOL_LIVE: {
+                    "config": material_pool_live_config or {"interval_seconds": 3600, "enabled": True},
+                    "task_running": (
+                        self._material_pool_live_task_handle is not None
+                        and not self._material_pool_live_task_handle.done()
                     ),
                 },
                 TASK_CODE_RED_FLOWER: {
@@ -529,6 +545,9 @@ class SchedulerService:
         elif task_code == TASK_CODE_CLOSE_NOTICE:
             logger.info("[定时任务调度] 手动触发关闭账号消息通知任务")
             await self._close_notice_task.execute()
+        elif task_code == TASK_CODE_MATERIAL_POOL_LIVE:
+            logger.info("[定时任务调度] 手动触发资料池在售状态对账任务")
+            await self._material_pool_live_task.execute()
         elif task_code == TASK_CODE_RED_FLOWER:
             logger.info("[定时任务调度] 手动触发求小红花任务")
             await self._red_flower_task.execute()
@@ -1052,6 +1071,39 @@ class SchedulerService:
                 break
         
         logger.info("[定时任务调度] 关闭账号消息通知任务循环结束")
+
+    async def _run_material_pool_live_loop(self) -> None:
+        """资料池在售状态对账任务执行循环（每小时一次，目录比对）"""
+        logger.info("[定时任务调度] 资料池在售状态对账任务循环开始")
+
+        # 初始加载配置
+        await self.reload_task_config(TASK_CODE_MATERIAL_POOL_LIVE)
+
+        while self._running:
+            config = ScheduledTaskService.get_cached_config(TASK_CODE_MATERIAL_POOL_LIVE)
+            if not config:
+                config = {"interval_seconds": 3600, "enabled": True}
+
+            interval = config.get("interval_seconds", 3600)
+            enabled = config.get("enabled", True)
+
+            if enabled:
+                try:
+                    await self._material_pool_live_task.execute()
+                except asyncio.CancelledError:
+                    logger.info("[定时任务调度] 资料池在售状态对账任务被取消")
+                    break
+                except Exception as e:
+                    logger.error(f"[定时任务调度] 资料池在售状态对账任务执行异常: {e}")
+
+            # 等待下一次执行
+            try:
+                await asyncio.sleep(interval)
+            except asyncio.CancelledError:
+                logger.info("[定时任务调度] 资料池在售状态对账任务等待被取消")
+                break
+
+        logger.info("[定时任务调度] 资料池在售状态对账任务循环结束")
 
     async def _run_red_flower_loop(self) -> None:
         """求小红花任务执行循环"""

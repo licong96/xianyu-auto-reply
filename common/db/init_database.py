@@ -427,6 +427,13 @@ class DatabaseInitializer:
             "定时关闭账号消息通知",
         ),
         (
+            "material_pool_live",
+            "资料池在售状态对账",
+            3600,
+            True,
+            "每小时与商品目录比对，核对资料池已上架商品的在售状态（纯数据库比对，无接口调用）",
+        ),
+        (
             "red_flower",
             "求小红花任务",
             300,
@@ -1477,6 +1484,9 @@ class DatabaseInitializer:
                 item_id VARCHAR(64) DEFAULT NULL COMMENT '回填：闲鱼商品 ID',
                 card_id BIGINT DEFAULT NULL COMMENT '回填：卡券 ID',
                 relist_rule_id BIGINT DEFAULT NULL COMMENT '回填：自动续售规则 ID',
+                item_live_status VARCHAR(20) NOT NULL DEFAULT 'unknown' COMMENT '商品实际在售状态：on_sale/off_sale/unknown（对账回写）',
+                item_live_checked_at DATETIME DEFAULT NULL COMMENT '上次核对在售状态时间',
+                item_live_error VARCHAR(255) DEFAULT NULL COMMENT '最近核对失败原因（成功清空）',
                 error_message TEXT DEFAULT NULL COMMENT '失败原因',
                 retry_count INT NOT NULL DEFAULT 0 COMMENT '重试次数',
                 is_deleted TINYINT(1) NOT NULL DEFAULT 0 COMMENT '软删除',
@@ -2067,6 +2077,10 @@ class DatabaseInitializer:
             ("publish_options", "JSON DEFAULT NULL COMMENT '发布选项覆盖项（成色/运费/所在地/数量/多图/视频/规格等）'", "platform_attributes"),
             # CUSTOM: 网盘直选文件夹上架（22 号方案第二阶段）：分享链接为整个文件夹
             ("is_dir", "TINYINT(1) NOT NULL DEFAULT 0 COMMENT '网盘导入的是整个文件夹'", "publish_options"),
+            # CUSTOM: 商品实际在售状态对账（低频定时任务 + 手动刷新回写）
+            ("item_live_status", "VARCHAR(20) NOT NULL DEFAULT 'unknown' COMMENT '商品实际在售状态：on_sale/off_sale/unknown（对账回写）'", "relist_rule_id"),
+            ("item_live_checked_at", "DATETIME DEFAULT NULL COMMENT '上次核对在售状态时间'", "item_live_status"),
+            ("item_live_error", "VARCHAR(255) DEFAULT NULL COMMENT '最近核对失败原因（成功清空）'", "item_live_checked_at"),
         ],
         "xy_keyword_rules": [
             ("location_name", "VARCHAR(255) DEFAULT NULL COMMENT '站外联系方式定位名称'", "image_url"),

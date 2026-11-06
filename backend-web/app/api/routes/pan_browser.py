@@ -107,13 +107,18 @@ def _source_url_variants(pan_type: str, pan_path: str) -> List[str]:
 async def _find_pool_by_pan_path(
     session: AsyncSession, owner_id: int, pan_type: str, pan_path: str
 ) -> Optional[MaterialPool]:
-    """按网盘路径命中资料池记录：source_url（各形态）或 pan_path 比对。"""
+    """按网盘路径命中资料池记录：source_url（各形态）或 pan_path 比对。
+
+    必须同时匹配 pan_type：互传同步后两个网盘路径相同，
+    只比路径会把 A 盘的分享错配到 B 盘（曾导致 baidu 链接被写成夸克地址）。
+    """
     variants = _source_url_variants(pan_type, pan_path)
     stmt = (
         select(MaterialPool)
         .where(
             MaterialPool.owner_id == owner_id,
             MaterialPool.is_deleted == False,  # noqa: E712
+            MaterialPool.pan_type == pan_type,
             or_(MaterialPool.source_url.in_(variants), MaterialPool.pan_path == pan_path),
         )
         .limit(1)
@@ -140,7 +145,25 @@ async def _find_link_by_pan_path(
     return (await session.execute(stmt)).scalar_one_or_none()
 
 
+# 各网盘分享链接应出现的域名，用于拦截跨盘错配的链接
+_PAN_URL_HOSTS = {
+    "baidu": ("pan.baidu.com",),
+    "quark": ("pan.quark.cn",),
+}
+
+
+def _validate_share_url(pan_type: str, share: Dict[str, Any]) -> None:
+    """校验分享链接域名与该网盘类型匹配；不匹配说明数据错配，按失败处理。"""
+    url = share.get("share_url")
+    if not url:
+        raise PanError(f"{pan_type} 分享结果缺少链接")
+    hosts = _PAN_URL_HOSTS.get(pan_type)
+    if hosts and not any(h in url for h in hosts):
+        raise PanError(f"{pan_type} 分享链接域名异常（疑似跨盘错配）：{url}")
+
+
 def _share_to_dict(pan_type: str, share: Dict[str, Any]) -> Dict[str, Any]:
+    _validate_share_url(pan_type, share)
     expire_at = share.get("share_expire_at")
     return {
         "pan_type": pan_type,
@@ -162,6 +185,7 @@ async def _ensure_share_for_location(
     # 1) 资料池主记录或子表已有该路径的分享 → 直接复用
     row = await _find_pool_by_pan_path(session, owner_id, pan_type, path)
     if row and row.pan_url:
+        logger.info(f"[pan] 复用主记录分享 {pan_type}:{path} -> pool_id={row.id}")
         return _share_to_dict(pan_type, {
             "share_url": row.pan_url,
             "pan_code": row.pan_code,
@@ -170,6 +194,7 @@ async def _ensure_share_for_location(
         })
     link = await _find_link_by_pan_path(session, owner_id, pan_type, path)
     if link:
+        logger.info(f"[pan] 复用子表分享 {pan_type}:{path} -> link_id={link.id}")
         return _share_to_dict(pan_type, {
             "share_url": link.pan_url,
             "pan_code": link.pan_code,

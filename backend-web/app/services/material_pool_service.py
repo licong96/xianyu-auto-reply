@@ -123,6 +123,10 @@ def _row_to_dict(row: MaterialPool, pan_links: Optional[List[Dict[str, Any]]] = 
         "item_id": row.item_id,
         "card_id": row.card_id,
         "relist_rule_id": row.relist_rule_id,
+        # 商品实际在售状态（对账回写；listed 只表示曾上架成功，不代表当下在售）
+        "item_live_status": row.item_live_status,
+        "item_live_checked_at": row.item_live_checked_at.isoformat() if row.item_live_checked_at else None,
+        "item_live_error": row.item_live_error,
         "error_message": row.error_message,
         "retry_count": row.retry_count,
         "owner_id": row.owner_id,
@@ -168,6 +172,7 @@ class MaterialPoolService:
         page: int = 1,
         page_size: int = 20,
         status: Optional[str] = None,
+        item_live_status: Optional[str] = None,
         school: Optional[str] = None,
         year: Optional[str] = None,
         grade: Optional[str] = None,
@@ -180,6 +185,8 @@ class MaterialPoolService:
         cond = [MaterialPool.is_deleted == False, *self._scope_cond(user)]  # noqa: E712
         if status:
             cond.append(MaterialPool.status == status)
+        if item_live_status:
+            cond.append(MaterialPool.item_live_status == item_live_status)
         if source_type:
             cond.append(MaterialPool.source_type == source_type)
         if school:

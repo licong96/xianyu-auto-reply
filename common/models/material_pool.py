@@ -42,6 +42,13 @@ VALID_STATUS_VALUES = {
     STATUS_FAILED,
 }
 
+# 商品实际在售状态（与流水线 status 独立的第二维度，定时对账/手动刷新回写）
+LIVE_ON_SALE = "on_sale"
+LIVE_OFF_SALE = "off_sale"
+LIVE_UNKNOWN = "unknown"
+
+VALID_LIVE_STATUS_VALUES = {LIVE_ON_SALE, LIVE_OFF_SALE, LIVE_UNKNOWN}
+
 
 class MaterialPool(TimestampMixin, Base):
     """资料池表 - 爬虫采集的试卷资料，经网盘上传、审核后一键上架"""
@@ -115,6 +122,18 @@ class MaterialPool(TimestampMixin, Base):
     item_id: Mapped[str | None] = mapped_column(String(64), comment="回填：闲鱼商品 ID")
     card_id: Mapped[int | None] = mapped_column(BigInteger, comment="回填：卡券 ID")
     relist_rule_id: Mapped[int | None] = mapped_column(BigInteger, comment="回填：自动续售规则 ID")
+    # ---- 商品实际在售状态（低频对账 + 手动刷新回写；与流水线 status 独立）----
+    item_live_status: Mapped[str | None] = mapped_column(
+        String(20),
+        default=LIVE_UNKNOWN,
+        server_default=LIVE_UNKNOWN,
+        comment="商品实际在售状态：on_sale/off_sale/unknown（定时对账与手动刷新回写）",
+    )
+    item_live_checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), comment="上次核对在售状态的时间"
+    )
+    item_live_error: Mapped[str | None] = mapped_column(String(255), comment="最近核对失败原因（成功清空）")
+
     error_message: Mapped[str | None] = mapped_column(Text, comment="失败原因")
     retry_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0", comment="重试次数")
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0", nullable=False, comment="软删除")
