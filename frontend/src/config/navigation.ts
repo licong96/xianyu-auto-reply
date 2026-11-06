@@ -167,6 +167,7 @@ export const adminNavItems: NavEntry[] = [
       { key: 'admin-red-flower-batches', icon: Flower2, label: '求小红花日志', path: '/admin/red-flower-batches', adminOnly: true },
       { key: 'admin-db-backup-logs', icon: Database, label: '数据库备份日志', path: '/admin/db-backup-logs', adminOnly: true },
       { key: 'admin-pan-sync-logs', icon: Cloud, label: '网盘同步日志', path: '/admin/pan-sync-logs', adminOnly: true },
+      { key: 'admin-share-check-logs', icon: Cloud, label: '分享续期巡检日志', path: '/admin/share-check-logs', adminOnly: true },
     ],
   },
   { key: 'admin-scheduled-tasks', icon: Timer, label: '定时任务', path: '/admin/scheduled-tasks', adminOnly: true },

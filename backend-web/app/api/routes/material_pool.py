@@ -253,38 +253,14 @@ async def reshare_pool(
     if not links:
         return ApiResponse(success=False, message="该资料没有可重建分享的网盘记录（需先「入池」生成网盘位置）", data=None)
 
-    results: List[Dict[str, Any]] = []
-    ok_count = 0
-    for link in links:
-        try:
-            client = make_client(link.pan_type)
-            share = await asyncio.to_thread(
-                lambda: client.create_share(link.pan_path, days=_share_days(), passcode=False)
-            )
-            _validate_share_url(link.pan_type, share)
-            link.pan_url = share["share_url"]
-            link.pan_code = share.get("pan_code")
-            link.share_id = share.get("share_id")
-            expire_at = share.get("share_expire_at")
-            link.share_expire_at = expire_at if isinstance(expire_at, datetime) else None
-            # 主记录旧字段恰好是该盘该路径时一并刷新
-            if pool.pan_type == link.pan_type and pool.pan_path == link.pan_path:
-                pool.pan_url = link.pan_url
-                pool.pan_code = link.pan_code
-                pool.share_id = link.share_id
-                pool.share_expire_at = link.share_expire_at
-            ok_count += 1
-            results.append({"pan_type": link.pan_type, "ok": True, "share_url": link.pan_url})
-            logger.info(f"[material-pool] 重新分享成功 pool_id={pool_id} {link.pan_type} -> {link.pan_url}")
-        except Exception as exc:  # noqa: BLE001 - 单侧失败不拖垮其他盘
-            results.append({"pan_type": link.pan_type, "ok": False, "error": str(exc)})
-            logger.warning(f"[material-pool] 重新分享失败 pool_id={pool_id} {link.pan_type}：{exc}")
+    # 重建逻辑在 share_renew_service（定时续期共用）：含卡券重建与日志落库
+    from app.services.share_renew_service import reshare_pool_links
 
-    if ok_count:
-        await session.commit()
+    data = await reshare_pool_links(session, pool, list(links), log_prefix="[material-pool]")
+    ok_count = data["success_count"]
     message = f"重新分享完成：成功 {ok_count} / 共 {len(links)} 个网盘"
     return ApiResponse(success=ok_count > 0, message=message, data={
-        "results": results, "success_count": ok_count, "total": len(links),
+        "results": data["results"], "success_count": ok_count, "total": len(links),
     })
 
 

@@ -496,6 +496,21 @@ class DatabaseInitializer:
             True,
             "检测已成交并完成发货的商品，确认旧商品下架后使用原素材自动续售",
         ),
+        # CUSTOM: 网盘分享自动续期与内容存活巡检 - 两个新任务的配置种子
+        (
+            "share_renew",
+            "网盘分享到期续期",
+            43200,
+            True,
+            "每12小时扫描7天内到期的网盘分享链接，重建分享地址并同步刷新绑定卡券",
+        ),
+        (
+            "share_health_check",
+            "网盘分享存活巡检",
+            86400,
+            True,
+            "每24小时用浏览器抽检分享地址内容是否可访问，仅记录日志与通知，不自动处理",
+        ),
     )
     
     # ========== 所有数据表的DDL定义 ==========
@@ -1513,10 +1528,16 @@ class DatabaseInitializer:
                 pan_code VARCHAR(20) DEFAULT NULL COMMENT '提取码（无则空）',
                 share_id VARCHAR(100) DEFAULT NULL COMMENT '分享 ID（撤销/巡检用）',
                 share_expire_at DATETIME DEFAULT NULL COMMENT '分享有效期',
+                last_check_status VARCHAR(20) DEFAULT NULL COMMENT '巡检状态：valid/invalid/empty/error',
+                last_check_at DATETIME DEFAULT NULL COMMENT '上次巡检时间',
+                last_renew_at DATETIME DEFAULT NULL COMMENT '上次自动续期时间',
+                check_priority TINYINT NOT NULL DEFAULT 0 COMMENT '巡检插队标记：1=优先检查（续期后的新地址）',
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
                 UNIQUE KEY uq_mppl_pool_pan (pool_id, pan_type),
-                INDEX idx_mppl_pool (pool_id)
+                INDEX idx_mppl_pool (pool_id),
+                INDEX idx_mppl_expire (share_expire_at),
+                INDEX idx_mppl_check (last_check_at)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='资料池网盘链接子表 - 多网盘并列查询与合并列表方案';
         """,
 
@@ -2059,6 +2080,26 @@ class DatabaseInitializer:
                 INDEX idx_psl_status (status)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='网盘互传同步日志表';
         """,
+
+        # CUSTOM: 网盘分享自动续期与内容存活巡检 - 续期/巡检日志表
+        "xy_share_check_logs": """
+            CREATE TABLE IF NOT EXISTS xy_share_check_logs (
+                id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+                task_type VARCHAR(20) NOT NULL COMMENT '任务类型：renew续期/check巡检',
+                pool_id BIGINT DEFAULT NULL COMMENT '资料池记录 ID（xy_material_pool.id）',
+                pan_type VARCHAR(20) NOT NULL COMMENT '网盘类型：quark/baidu',
+                pan_url VARCHAR(500) DEFAULT NULL COMMENT '检查/续期涉及的地址（续期记新地址）',
+                old_url VARCHAR(500) DEFAULT NULL COMMENT '仅续期：旧地址',
+                result VARCHAR(20) NOT NULL COMMENT '结果：renew=done/failed；check=valid/invalid/empty/error',
+                detail TEXT DEFAULT NULL COMMENT '命中选择器、页面标题、错误文案等排查信息',
+                fail_reason VARCHAR(500) DEFAULT NULL COMMENT '失败原因',
+                duration_seconds DOUBLE DEFAULT NULL COMMENT '单条耗时（秒）',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+                INDEX idx_sc_pool (pool_id),
+                INDEX idx_sc_type_time (task_type, created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='网盘分享续期与存活巡检日志表';
+        """,
     }
     
     # 字段迁移定义：表名 -> [(字段名, 字段定义, 在哪个字段后面)]
@@ -2081,6 +2122,13 @@ class DatabaseInitializer:
             ("item_live_status", "VARCHAR(20) NOT NULL DEFAULT 'unknown' COMMENT '商品实际在售状态：on_sale/off_sale/unknown（对账回写）'", "relist_rule_id"),
             ("item_live_checked_at", "DATETIME DEFAULT NULL COMMENT '上次核对在售状态时间'", "item_live_status"),
             ("item_live_error", "VARCHAR(255) DEFAULT NULL COMMENT '最近核对失败原因（成功清空）'", "item_live_checked_at"),
+        ],
+        # CUSTOM: 网盘分享自动续期与内容存活巡检 - 链接子表补巡检/续期字段
+        "xy_material_pool_pan_links": [
+            ("last_check_status", "VARCHAR(20) DEFAULT NULL COMMENT '巡检状态：valid/invalid/empty/error'", "share_expire_at"),
+            ("last_check_at", "DATETIME DEFAULT NULL COMMENT '上次巡检时间'", "last_check_status"),
+            ("last_renew_at", "DATETIME DEFAULT NULL COMMENT '上次自动续期时间'", "last_check_at"),
+            ("check_priority", "TINYINT NOT NULL DEFAULT 0 COMMENT '巡检插队标记：1=优先检查（续期后的新地址）'", "last_renew_at"),
         ],
         "xy_keyword_rules": [
             ("location_name", "VARCHAR(255) DEFAULT NULL COMMENT '站外联系方式定位名称'", "image_url"),

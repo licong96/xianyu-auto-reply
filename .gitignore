@@ -280,3 +280,6 @@ AGENTS.md
 # ------------------------------------------
 doc-fetch-resources/
 draft_*/
+
+# 巡检专用 Chrome 实例的用户数据目录（运行时生成，含登录态，不入库）
+share_health_check/chrome_user_data_share_checker/

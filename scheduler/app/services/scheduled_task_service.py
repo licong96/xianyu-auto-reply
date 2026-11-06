@@ -44,6 +44,9 @@ TASK_CODE_AUTO_ORDER = "auto_order"
 TASK_CODE_IMAGE_CLEANUP = "image_cleanup"
 TASK_CODE_AUTO_RELIST = "auto_relist_scan"
 TASK_CODE_MATERIAL_POOL_LIVE = "material_pool_live"
+# CUSTOM: 网盘分享自动续期与内容存活巡检
+TASK_CODE_SHARE_RENEW = "share_renew"
+TASK_CODE_SHARE_HEALTH_CHECK = "share_health_check"
 
 # 默认配置（数据库无配置时使用）
 DEFAULT_CONFIGS = {
@@ -73,6 +76,10 @@ DEFAULT_CONFIGS = {
     TASK_CODE_AUTO_RELIST: {"interval_seconds": 30, "enabled": True},
     # 资料池商品实际在售状态对账：每小时一次，纯数据库比对（与商品目录比对，无接口调用）
     TASK_CODE_MATERIAL_POOL_LIVE: {"interval_seconds": 3600, "enabled": True},
+    # CUSTOM: 网盘分享到期续期（提前 7 天重建分享）：每 12 小时触发
+    TASK_CODE_SHARE_RENEW: {"interval_seconds": 43200, "enabled": True},
+    # CUSTOM: 网盘分享内容存活巡检（真实浏览器打开页面验证）：每天一次
+    TASK_CODE_SHARE_HEALTH_CHECK: {"interval_seconds": 86400, "enabled": True},
 }
 
 

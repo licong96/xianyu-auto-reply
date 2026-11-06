@@ -375,35 +375,10 @@ class MaterialPoolService:
         return "\n".join(lines)[:1500]
 
     async def _build_card_text(self, row: MaterialPool) -> str:
-        """发货卡券正文。子表有链接记录按盘逐条输出；子表为空回退主记录旧单盘字段（老商品字节级不变）。"""
-        from app.services.pan.base import pan_display_name
+        """发货卡券正文。渲染逻辑在 common/services/card_share_text（scheduler 续期任务共用）。"""
+        from common.services.card_share_text import build_card_text
 
-        stmt = (
-            select(MaterialPoolPanLink)
-            .where(MaterialPoolPanLink.pool_id == row.id, MaterialPoolPanLink.pan_url.isnot(None))
-            .order_by(MaterialPoolPanLink.id)
-        )
-        links = (await self.session.execute(stmt)).scalars().all()
-        if links:
-            lines: List[str] = []
-            for i, link in enumerate(links):
-                if i > 0:
-                    lines.append("")  # 多个网盘链接之间空一行，便于买家阅读
-                lines.append(f"{pan_display_name(link.pan_type)}：{link.pan_url}")
-                if link.pan_code:
-                    lines.append(f"提取码：{link.pan_code}")
-            lines.append("")
-            lines.append(f"资料：{row.paper_name or ''}")
-            lines.append("链接失效请联系客服补发。")
-            return "\n".join(lines)
-        # 旧单盘记录（未迁子表）：保持原格式
-        lines = [f"网盘链接：{row.pan_url}"]
-        if row.pan_code:
-            lines.append(f"提取码：{row.pan_code}")
-        lines.append("")
-        lines.append(f"资料：{row.paper_name or ''}")
-        lines.append("链接失效请联系客服补发。")
-        return "\n".join(lines)
+        return await build_card_text(self.session, row)
 
     async def _find_published_item_id(self, account_pk: int, owner_id: int, title: str) -> Optional[str]:
         """发布成功后按标题在商品目录里反查 item_id（同步有索引延迟时兜底）。"""

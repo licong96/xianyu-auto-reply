@@ -42,6 +42,8 @@ from app.services.scheduler.dm_send_task import dm_send_task_service
 from app.services.scheduler.auto_order_task import auto_order_task_service
 from app.services.scheduler.image_cleanup_task import image_cleanup_task_service
 from app.services.scheduler.auto_relist_task import auto_relist_task_service
+from app.services.scheduler.share_renew_task import share_renew_task_service
+from app.services.scheduler.share_health_check_task import share_health_check_task_service
 from app.services.scheduled_task_service import (
     ScheduledTaskService,
     TASK_CODE_REDELIVERY,
@@ -69,6 +71,8 @@ from app.services.scheduled_task_service import (
     TASK_CODE_IMAGE_CLEANUP,
     TASK_CODE_AUTO_RELIST,
     TASK_CODE_MATERIAL_POOL_LIVE,
+    TASK_CODE_SHARE_RENEW,
+    TASK_CODE_SHARE_HEALTH_CHECK,
 )
 from common.db.session import async_session_maker
 
@@ -96,6 +100,8 @@ class SchedulerService:
         self._api_cookie_renew_task_handle: Optional[asyncio.Task] = None
         self._close_notice_task_handle: Optional[asyncio.Task] = None
         self._material_pool_live_task_handle: Optional[asyncio.Task] = None
+        self._share_renew_task_handle: Optional[asyncio.Task] = None
+        self._share_health_check_task_handle: Optional[asyncio.Task] = None
         self._red_flower_task_handle: Optional[asyncio.Task] = None
         self._db_backup_task_handle: Optional[asyncio.Task] = None
         self._delivery_timeout_task_handle: Optional[asyncio.Task] = None
@@ -121,6 +127,8 @@ class SchedulerService:
         self._api_cookie_renew_task = api_cookie_renew_task_service
         self._close_notice_task = close_notice_task_service
         self._material_pool_live_task = material_pool_live_task_service
+        self._share_renew_task = share_renew_task_service
+        self._share_health_check_task = share_health_check_task_service
         self._red_flower_task = RedFlowerTask()
         self._db_backup_task = db_backup_task_service
         self._delivery_timeout_task = delivery_timeout_task_service
@@ -158,7 +166,7 @@ class SchedulerService:
     
     async def reload_all_configs(self) -> None:
         """重新加载所有任务配置"""
-        for task_code in [TASK_CODE_REDELIVERY, TASK_CODE_RATE, TASK_CODE_POLISH, TASK_CODE_DAY_SWITCH, TASK_CODE_CLEANUP_BROWSER_DATA, TASK_CODE_CLEANUP_UNCONFIGURED_BROWSER_DATA, TASK_CODE_FETCH_ORDERS, TASK_CODE_FETCH_PENDING_ORDERS, TASK_CODE_FETCH_REFUND_ORDERS, TASK_CODE_FETCH_ITEMS, TASK_CODE_LOGIN_RENEW, TASK_CODE_TOKEN_RENEWAL, TASK_CODE_COOKIES_REFRESH, TASK_CODE_API_COOKIE_RENEW, TASK_CODE_CLOSE_NOTICE, TASK_CODE_RED_FLOWER, TASK_CODE_DB_BACKUP, TASK_CODE_MATERIAL_POOL_LIVE]:
+        for task_code in [TASK_CODE_REDELIVERY, TASK_CODE_RATE, TASK_CODE_POLISH, TASK_CODE_DAY_SWITCH, TASK_CODE_CLEANUP_BROWSER_DATA, TASK_CODE_CLEANUP_UNCONFIGURED_BROWSER_DATA, TASK_CODE_FETCH_ORDERS, TASK_CODE_FETCH_PENDING_ORDERS, TASK_CODE_FETCH_REFUND_ORDERS, TASK_CODE_FETCH_ITEMS, TASK_CODE_LOGIN_RENEW, TASK_CODE_TOKEN_RENEWAL, TASK_CODE_COOKIES_REFRESH, TASK_CODE_API_COOKIE_RENEW, TASK_CODE_CLOSE_NOTICE, TASK_CODE_RED_FLOWER, TASK_CODE_DB_BACKUP, TASK_CODE_MATERIAL_POOL_LIVE, TASK_CODE_SHARE_RENEW, TASK_CODE_SHARE_HEALTH_CHECK]:
             await self.reload_task_config(task_code)
         for task_code in [TASK_CODE_DELIVERY_TIMEOUT, TASK_CODE_LISTING_MONITOR, TASK_CODE_SELLER_FILL, TASK_CODE_DM_SEND, TASK_CODE_AUTO_ORDER]:
             await self.reload_task_config(task_code)
@@ -189,6 +197,8 @@ class SchedulerService:
         self._api_cookie_renew_task_handle = asyncio.create_task(self._run_api_cookie_renew_loop())
         self._close_notice_task_handle = asyncio.create_task(self._run_close_notice_loop())
         self._material_pool_live_task_handle = asyncio.create_task(self._run_material_pool_live_loop())
+        self._share_renew_task_handle = asyncio.create_task(self._run_share_renew_loop())
+        self._share_health_check_task_handle = asyncio.create_task(self._run_share_health_check_loop())
         self._red_flower_task_handle = asyncio.create_task(self._run_red_flower_loop())
         self._db_backup_task_handle = asyncio.create_task(self._run_db_backup_loop())
         self._delivery_timeout_task_handle = asyncio.create_task(self._run_delivery_timeout_loop())
@@ -255,6 +265,12 @@ class SchedulerService:
         if self._material_pool_live_task_handle:
             self._material_pool_live_task_handle.cancel()
             self._material_pool_live_task_handle = None
+        if self._share_renew_task_handle:
+            self._share_renew_task_handle.cancel()
+            self._share_renew_task_handle = None
+        if self._share_health_check_task_handle:
+            self._share_health_check_task_handle.cancel()
+            self._share_health_check_task_handle = None
         if self._red_flower_task_handle:
             self._red_flower_task_handle.cancel()
             self._red_flower_task_handle = None
@@ -302,6 +318,8 @@ class SchedulerService:
         api_cookie_renew_config = ScheduledTaskService.get_cached_config(TASK_CODE_API_COOKIE_RENEW)
         close_notice_config = ScheduledTaskService.get_cached_config(TASK_CODE_CLOSE_NOTICE)
         material_pool_live_config = ScheduledTaskService.get_cached_config(TASK_CODE_MATERIAL_POOL_LIVE)
+        share_renew_config = ScheduledTaskService.get_cached_config(TASK_CODE_SHARE_RENEW)
+        share_health_check_config = ScheduledTaskService.get_cached_config(TASK_CODE_SHARE_HEALTH_CHECK)
         red_flower_config = ScheduledTaskService.get_cached_config(TASK_CODE_RED_FLOWER)
         db_backup_config = ScheduledTaskService.get_cached_config(TASK_CODE_DB_BACKUP)
         delivery_timeout_config = ScheduledTaskService.get_cached_config(TASK_CODE_DELIVERY_TIMEOUT)
@@ -427,6 +445,20 @@ class SchedulerService:
                         and not self._material_pool_live_task_handle.done()
                     ),
                 },
+                TASK_CODE_SHARE_RENEW: {
+                    "config": share_renew_config or {"interval_seconds": 43200, "enabled": True},
+                    "task_running": (
+                        self._share_renew_task_handle is not None
+                        and not self._share_renew_task_handle.done()
+                    ),
+                },
+                TASK_CODE_SHARE_HEALTH_CHECK: {
+                    "config": share_health_check_config or {"interval_seconds": 86400, "enabled": True},
+                    "task_running": (
+                        self._share_health_check_task_handle is not None
+                        and not self._share_health_check_task_handle.done()
+                    ),
+                },
                 TASK_CODE_RED_FLOWER: {
                     "config": red_flower_config or {"interval_seconds": 300, "enabled": False},
                     "task_running": (
@@ -548,6 +580,12 @@ class SchedulerService:
         elif task_code == TASK_CODE_MATERIAL_POOL_LIVE:
             logger.info("[定时任务调度] 手动触发资料池在售状态对账任务")
             await self._material_pool_live_task.execute()
+        elif task_code == TASK_CODE_SHARE_RENEW:
+            logger.info("[定时任务调度] 手动触发网盘分享到期续期任务")
+            await self._share_renew_task.execute()
+        elif task_code == TASK_CODE_SHARE_HEALTH_CHECK:
+            logger.info("[定时任务调度] 手动触发网盘分享存活巡检任务")
+            await self._share_health_check_task.execute()
         elif task_code == TASK_CODE_RED_FLOWER:
             logger.info("[定时任务调度] 手动触发求小红花任务")
             await self._red_flower_task.execute()
@@ -1071,6 +1109,68 @@ class SchedulerService:
                 break
         
         logger.info("[定时任务调度] 关闭账号消息通知任务循环结束")
+
+    async def _run_share_health_check_loop(self) -> None:
+        """网盘分享存活巡检任务执行循环（默认每天一次，子进程跑真实浏览器）"""
+        logger.info("[定时任务调度] 网盘分享存活巡检任务循环开始")
+
+        # 初始加载配置
+        await self.reload_task_config(TASK_CODE_SHARE_HEALTH_CHECK)
+
+        while self._running:
+            config = ScheduledTaskService.get_cached_config(TASK_CODE_SHARE_HEALTH_CHECK)
+            if not config:
+                config = {"interval_seconds": 86400, "enabled": True}
+
+            interval = config.get("interval_seconds", 86400)
+            enabled = config.get("enabled", True)
+
+            if enabled:
+                try:
+                    await self._share_health_check_task.execute()
+                except asyncio.CancelledError:
+                    logger.info("[定时任务调度] 网盘分享存活巡检任务被取消")
+                    break
+                except Exception as e:
+                    logger.error(f"[定时任务调度] 网盘分享存活巡检任务执行异常: {e}")
+
+            # 等待下一次执行
+            try:
+                await asyncio.sleep(interval)
+            except asyncio.CancelledError:
+                logger.info("[定时任务调度] 网盘分享存活巡检任务等待被取消")
+                break
+
+    async def _run_share_renew_loop(self) -> None:
+        """网盘分享到期续期任务执行循环（默认每 12 小时触发一次）"""
+        logger.info("[定时任务调度] 网盘分享到期续期任务循环开始")
+
+        # 初始加载配置
+        await self.reload_task_config(TASK_CODE_SHARE_RENEW)
+
+        while self._running:
+            config = ScheduledTaskService.get_cached_config(TASK_CODE_SHARE_RENEW)
+            if not config:
+                config = {"interval_seconds": 43200, "enabled": True}
+
+            interval = config.get("interval_seconds", 43200)
+            enabled = config.get("enabled", True)
+
+            if enabled:
+                try:
+                    await self._share_renew_task.execute()
+                except asyncio.CancelledError:
+                    logger.info("[定时任务调度] 网盘分享到期续期任务被取消")
+                    break
+                except Exception as e:
+                    logger.error(f"[定时任务调度] 网盘分享到期续期任务执行异常: {e}")
+
+            # 等待下一次执行
+            try:
+                await asyncio.sleep(interval)
+            except asyncio.CancelledError:
+                logger.info("[定时任务调度] 网盘分享到期续期任务等待被取消")
+                break
 
     async def _run_material_pool_live_loop(self) -> None:
         """资料池在售状态对账任务执行循环（每小时一次，目录比对）"""

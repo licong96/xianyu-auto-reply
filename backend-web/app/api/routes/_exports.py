@@ -67,6 +67,7 @@ from . import (
     external_message_logs,
     external_orders,
     external_publish,
+    internal_share,  # CUSTOM: 网盘分享到期续期（内部接口）
     proxy,
     refund_cancel,
     agree_deliver,
@@ -77,6 +78,7 @@ from . import (
     account_login_logs,
     db_backup_logs,
     pan_sync_logs,
+    share_check_logs,  # CUSTOM: 分享续期巡检日志
     search,
     shared_scan,
     system_control,
@@ -170,6 +172,7 @@ api_router.include_router(cookies_refresh_logs.router, prefix="/admin", tags=["C
 api_router.include_router(api_cookie_renew_logs.router, prefix="/admin", tags=["接口续期Cookies日志"])
 api_router.include_router(token_renewal_logs.router, prefix="/admin", tags=["Token续期日志"])
 api_router.include_router(pan_sync_logs.router, prefix="/admin", tags=["网盘同步日志"])
+api_router.include_router(share_check_logs.router, prefix="/admin", tags=["分享续期巡检日志"])
 
 # 代理和上传
 api_router.include_router(proxy.router, prefix="/proxy", tags=["代理配置"])
@@ -215,6 +218,8 @@ api_router.include_router(version.router, tags=["版本检测"])  # 已定义pre
 api_router.include_router(material_pool.router, tags=["资料池"])  # 已定义prefix="/material-pool"
 # CUSTOM: 网盘浏览与直选上架
 api_router.include_router(pan_browser.router, tags=["网盘"])  # 已定义prefix="/pan"
+# CUSTOM: 网盘分享到期续期（内部接口，X-Internal-Token 鉴权）
+api_router.include_router(internal_share.router)  # 已定义prefix="/internal"
 
 
 __all__ = ["api_router"]

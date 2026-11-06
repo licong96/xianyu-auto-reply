@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Index, String, UniqueConstraint
+from sqlalchemy import BigInteger, DateTime, Index, SmallInteger, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from common.db.base_class import Base, TimestampMixin
@@ -26,6 +26,8 @@ class MaterialPoolPanLink(TimestampMixin, Base):
     __table_args__ = (
         UniqueConstraint("pool_id", "pan_type", name="uq_mppl_pool_pan"),
         Index("idx_mppl_pool", "pool_id"),
+        Index("idx_mppl_expire", "share_expire_at"),
+        Index("idx_mppl_check", "last_check_at"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True, comment="主键ID")
@@ -38,6 +40,10 @@ class MaterialPoolPanLink(TimestampMixin, Base):
     pan_code: Mapped[str | None] = mapped_column(String(20), comment="提取码（无则空）")
     share_id: Mapped[str | None] = mapped_column(String(100), comment="分享 ID（撤销/巡检用）")
     share_expire_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment="分享有效期")
+    last_check_status: Mapped[str | None] = mapped_column(String(20), comment="巡检状态：valid/invalid/empty/error")
+    last_check_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment="上次巡检时间")
+    last_renew_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment="上次自动续期时间")
+    check_priority: Mapped[int] = mapped_column(SmallInteger, default=0, comment="巡检插队标记：1=优先检查（续期后的新地址）")
 
     pool: Mapped["MaterialPool"] = relationship(
         "MaterialPool",
