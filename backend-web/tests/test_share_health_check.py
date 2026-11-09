@@ -23,7 +23,11 @@ from common.models.share_check_log import ShareCheckLog
 
 
 def _run(coro):
-    return asyncio.get_event_loop_policy().new_event_loop().run_until_complete(coro)
+    loop = asyncio.get_event_loop_policy().new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
 
 
 class _Container:

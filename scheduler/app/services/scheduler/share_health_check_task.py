@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import subprocess
 from datetime import datetime
@@ -115,7 +116,10 @@ class ShareHealthCheckTaskService:
 
         cmd = [str(py), "-m", "share_health_check", "check", "--batch-size", str(batch_size)]
         try:
-            proc = subprocess.run(
+            # 子进程是同步阻塞调用且最长可达 40 分钟：放线程池执行，
+            # 避免冻结 scheduler 共享事件循环（补发货等高频任务同循环运行）
+            proc = await asyncio.to_thread(
+                subprocess.run,
                 cmd, cwd=str(_repo_root()), capture_output=True, text=True, timeout=2400,
             )
         except subprocess.TimeoutExpired:

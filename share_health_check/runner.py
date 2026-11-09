@@ -26,9 +26,6 @@ DEFAULT_BATCH_SIZE = 50
 MIN_GAP_SECONDS = 2.0
 MAX_GAP_SECONDS = 3.0
 
-# 单条当天 error 重试上限：达到后当天不再查（由 SQL 侧 last_check_status + last_check_at 控制）
-ERROR_RETRY_PER_DAY = 3
-
 
 async def fetch_links_to_check(session: AsyncSession, batch_size: int = DEFAULT_BATCH_SIZE) -> List[MaterialPoolPanLink]:
     """取一批待巡检链接：续期后的优先链接（check_priority=1）插队，
