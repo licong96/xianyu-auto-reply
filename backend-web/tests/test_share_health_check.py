@@ -49,8 +49,7 @@ class _Container:
 class FakeTab:
     """check_link 的最小 tab 实现：按场景返回元素/文本。"""
 
-    def __init__(self, *, err=None, valid=None, text="", title="分享页", raise_on_get=None):
-        self._err = err          # 错误容器（有 .text）
+    def __init__(self, *, valid=None, text="", title="分享页", raise_on_get=None):
         self._valid = valid      # 有效容器（_Container 或任意非 None）
         self._text = text
         self._title = title
@@ -63,8 +62,6 @@ class FakeTab:
         self.opened.append((url, timeout))
 
     def ele(self, selector, timeout=None):
-        if selector == checker.BAIDU_ERROR_SELECTOR:
-            return self._err
         if selector in (checker.QUARK_VALID_SELECTOR, checker.BAIDU_VALID_SELECTOR):
             return self._valid
         return None
@@ -110,25 +107,12 @@ class TestBuildCheckUrl:
 
 
 class TestCheckLink:
-    def test_baidu_invalid_error_container(self):
-        tab = FakeTab(err=SimpleNamespace(text="啊哦，你来晚了，分享的文件已经被删除了"))
-        out = check_link(tab, "baidu", "https://pan.baidu.com/s/x", budget=3)
-        assert out.status == checker.INVALID
-        assert "你来晚了" in out.detail
-
-    def test_baidu_hidden_empty_error_container_not_invalid(self):
-        """真实冒烟证实：百度正常分享页 DOM 预置隐藏的空 #shareError，
-        且有效容器存在时必须优先判 valid，不能被错误容器误报。"""
-        tab = FakeTab(err=SimpleNamespace(text="  "), valid=object(), text="共 2 个文件")
-        out = check_link(tab, "baidu", "https://pan.baidu.com/s/x", budget=3)
-        assert out.status == checker.VALID
-
-    def test_baidu_error_container_requires_text(self):
-        """只有隐藏空错误容器、无有效容器时：不能判 invalid，应走到 error 重试。"""
-        tab = FakeTab(err=SimpleNamespace(text=""), text="无关内容")
+    def test_baidu_no_container_within_budget_is_invalid(self):
+        """百度：规定时间内拿不到 file-name 容器即视为失败。"""
+        tab = FakeTab(text="啊哦，你来晚了，分享的文件已经被删除了")
         out = check_link(tab, "baidu", "https://pan.baidu.com/s/x", budget=1)
-        assert out.status == checker.ERROR
-        assert out.status != checker.INVALID
+        assert out.status == checker.INVALID
+        assert "未获取到文件列表容器" in out.detail
 
     def test_quark_invalid_keyword(self):
         tab = FakeTab(text="啊哦，你来晚了，分享的文件已经被删除了，下次要早点哟")
@@ -160,7 +144,7 @@ class TestCheckLink:
         tab = FakeTab(text="一些无关内容")
         out = check_link(tab, "quark", "https://pan.quark.cn/s/x", budget=1)
         assert out.status == checker.ERROR
-        assert "未出现有效/错误容器" in out.detail
+        assert "未出现有效容器或失效文案" in out.detail
 
     def test_risk_when_captcha_text(self):
         tab = FakeTab(text="请完成验证后继续 拖动滑块")

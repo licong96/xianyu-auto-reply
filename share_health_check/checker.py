@@ -1,24 +1,19 @@
-"""单条分享链接的页面判定状态机（总预算 15 秒）。
+"""单条分享链接的页面判定（总预算 15 秒）。
 
-判定顺序（每条链接）：
-1. tab.get(url, timeout=剩余预算) —— 页面跳转
-2. 静置 3 秒：百度分享页有「输入提取码」中间页，DOM 会经历
-   输入页 → 跳转 → 真实分享页的变化，加载完立即查询容易命中
-   残留 DOM 或隐藏预置节点；等 3 秒页面结构稳定再判定
-3. 轮询"有效容器"优先（先确认页面活着且能列出内容）：
-   夸克: css:tbody.ant-table-tbody（行数 0 → empty）
-   百度: css:div.file-name（"共 N 个文件" N=0 → empty）
-4. 再查"错误容器"：命中且文案非空 → invalid（链接确实死了，高置信）
-   百度: css:#error-new #shareError
-   夸克: 页面文本命中失效关键词（夸克失效页无稳定容器，用文案白名单）
-   注意：百度正常分享页 DOM 预置隐藏的空错误容器（实测误报），
-   必须文案非空才算失效
-5. 预算耗尽 → 看 URL/文本特征：
-   命中风控/登录墙特征 → risk（暂停巡检 + 通知人工）
-   否则 → error（网络慢等，永不升级为 invalid，只进重试）
+百度：页面加载完静置 3 秒（提取码中间页跳转稳定），然后在剩余预算内
+轮询文件列表容器 div.file-name —— 拿到即正常（"共 N 个文件" N=0 为空），
+规定时间内拿不到就视为失败（invalid），不再单独识别错误页。
+
+夸克：轮询列表容器 tbody.ant-table-tbody（行数 0 为空）；同时用失效
+文案关键词判失效（夸克失效页无稳定容器）。
+
+通用：预算耗尽前命中风控/登录墙文案 → risk（暂停巡检人工处理）；
+夸克耗尽无容器无文案 → error（网络慢，仅重试）。
 
 tab 抽象：任何实现了 get(url, timeout) / ele(selector, timeout) / 属性 text 的对象
 （DrissionPage 的 ChromiumTab 天然满足），单测用假对象驱动。
+
+# CUSTOM: 网盘分享自动续期与内容存活巡检（新增文件，合并作者更新零冲突）
 """
 from __future__ import annotations
 
@@ -38,10 +33,9 @@ PAGE_BUDGET_SECONDS = 15.0
 PAGE_SETTLE_SECONDS = 3.0
 POLL_INTERVAL = 0.5
 
-# 各盘选择器与文案（网盘改版后只需改这里）
+# 各盘列表容器（网盘改版后只需改这里）
 QUARK_VALID_SELECTOR = "css:tbody.ant-table-tbody"
 BAIDU_VALID_SELECTOR = "css:div.file-name"
-BAIDU_ERROR_SELECTOR = "css:#error-new #shareError"
 
 # 夸克失效页文案白名单（命中即 invalid）
 QUARK_INVALID_KEYWORDS = (
@@ -54,7 +48,7 @@ QUARK_INVALID_KEYWORDS = (
     "内容不存在",
 )
 
-# 风控/登录墙特征（两个容器都不出现时兜底判 error 还是 risk）
+# 风控/登录墙特征（容器拿不到时区分 risk 与 error/invalid）
 RISK_KEYWORDS = (
     "访问过于频繁",
     "操作过于频繁",
@@ -98,15 +92,33 @@ def _page_title(tab: Any) -> str:
 
 
 def _ele(tab: Any, selector: str, timeout: float):
-    """包装 tab.ele：任何异常都视为未命中（DrissionPage 页面中途跳转会抛错）。"""
+    """包装 tab.ele：未命中统一返回 None。
+
+    DrissionPage 4.x 找不到元素时返回 NoneElement 占位对象（本身非 None，
+    访问属性才抛 ElementNotFoundError）——不能用 is not None 判断命中，
+    否则任何页面都会"命中"第一个容器。按类名识别占位对象，
+    真实元素与测试假对象原样返回。
+    """
     try:
-        return tab.ele(selector, timeout=max(0.1, timeout))
+        el = tab.ele(selector, timeout=max(0.1, timeout))
+        if el is None or el.__class__.__name__ == "NoneElement":
+            return None
+        return el
     except Exception:
         return None
 
 
+def _hit_risk(tab: Any) -> CheckOutcome | None:
+    """页面文本命中风控/登录墙特征时返回 RISK 结果，否则 None。"""
+    text = _page_text(tab)
+    hit = next((kw for kw in RISK_KEYWORDS if kw in text), None)
+    if not hit:
+        return None
+    return CheckOutcome(status=RISK, detail=f"疑似风控/登录墙（命中「{hit}」），建议暂停巡检并人工检查浏览器登录态")
+
+
 def check_link(tab: Any, pan_type: str, url: str, *, budget: float = PAGE_BUDGET_SECONDS) -> CheckOutcome:
-    """打开一个分享地址并判定状态（见模块头状态机）。"""
+    """打开一个分享地址并判定状态（见模块头）。"""
     started = time.time()
     deadline = started + budget
     try:
@@ -121,20 +133,18 @@ def check_link(tab: Any, pan_type: str, url: str, *, budget: float = PAGE_BUDGET
             duration_seconds=time.time() - started,
         )
 
-    # 静置：等提取码中间页跳转与 SPA 渲染稳定，避免查询命中残留 DOM。
-    # 常量从模块全局读取（测试可 monkeypatch 为 0）；不占用则剩余预算不足时自动缩短
+    # 静置：等提取码中间页跳转与 SPA 渲染稳定。常量从模块全局读取（测试可置 0）
     time.sleep(min(PAGE_SETTLE_SECONDS, max(0.0, deadline - time.time())))
 
     while time.time() < deadline:
         remaining = deadline - time.time()
-        # 1) 有效容器优先：先确认页面活着且能列出内容（用户实测指定的顺序）
         valid_sel = QUARK_VALID_SELECTOR if pan_type == "quark" else BAIDU_VALID_SELECTOR
         container = _ele(tab, valid_sel, remaining)
         if container is not None:
             if pan_type == "quark":
+                # 夸克：数表格行，0 行判空
                 try:
-                    rows = container.eles("css:tr") or []
-                    row_count = len(rows)
+                    row_count = len(container.eles("css:tr") or [])
                 except Exception:
                     row_count = -1  # 无法数行时按有内容处理
                 if row_count == 0:
@@ -145,12 +155,11 @@ def check_link(tab: Any, pan_type: str, url: str, *, budget: float = PAGE_BUDGET
                         duration_seconds=time.time() - started,
                     )
             else:
-                # 百度：头部"共 N 个文件"可判空
+                # 百度：头部"共 N 个文件"判空
                 try:
-                    header_text = " ".join(_page_text(tab).split())
                     import re
 
-                    m = re.search(r"共\s*(\d+)\s*个文件", header_text)
+                    m = re.search(r"共\s*(\d+)\s*个文件", " ".join(_page_text(tab).split()))
                     if m and int(m.group(1)) == 0:
                         return CheckOutcome(
                             status=EMPTY,
@@ -167,23 +176,8 @@ def check_link(tab: Any, pan_type: str, url: str, *, budget: float = PAGE_BUDGET
                 duration_seconds=time.time() - started,
             )
 
-        # 2) 错误容器：命中且文案非空 → invalid（空文案=隐藏预置节点，不算）
-        if pan_type == "baidu":
-            err = _ele(tab, BAIDU_ERROR_SELECTOR, remaining)
-            if err is not None:
-                snippet = ""
-                try:
-                    snippet = " ".join((err.text or "").split())[:200]
-                except Exception:
-                    pass
-                if snippet:
-                    return CheckOutcome(
-                        status=INVALID,
-                        detail=f"命中错误容器 {BAIDU_ERROR_SELECTOR}：{snippet}",
-                        page_title=_page_title(tab),
-                        duration_seconds=time.time() - started,
-                    )
-        else:
+        # 夸克：列表容器没出来时先用失效文案判死（百度不需要，拿不到容器即失败）
+        if pan_type == "quark":
             text = _page_text(tab)
             for kw in QUARK_INVALID_KEYWORDS:
                 if kw in text:
@@ -196,19 +190,22 @@ def check_link(tab: Any, pan_type: str, url: str, *, budget: float = PAGE_BUDGET
 
         time.sleep(POLL_INTERVAL)
 
-    # 3) 预算耗尽：风控特征 → risk；否则 error
-    text = _page_text(tab)
-    hit = next((kw for kw in RISK_KEYWORDS if kw in text), None)
-    if hit:
+    # 预算耗尽：风控特征 → risk；百度拿不到容器 → invalid；夸克 → error 重试
+    risk = _hit_risk(tab)
+    if risk:
+        risk.page_title = _page_title(tab)
+        risk.duration_seconds = time.time() - started
+        return risk
+    if pan_type == "baidu":
         return CheckOutcome(
-            status=RISK,
-            detail=f"疑似风控/登录墙（命中「{hit}」），建议暂停巡检并人工检查浏览器登录态",
+            status=INVALID,
+            detail=f"{int(budget)} 秒内未获取到文件列表容器（视为分享失效或不可访问）",
             page_title=_page_title(tab),
             duration_seconds=time.time() - started,
         )
     return CheckOutcome(
         status=ERROR,
-        detail=f"{int(budget)} 秒内未出现有效/错误容器（网络慢或页面结构变更）",
+        detail=f"{int(budget)} 秒内未出现有效容器或失效文案（网络慢或页面结构变更）",
         page_title=_page_title(tab),
         duration_seconds=time.time() - started,
     )
@@ -217,6 +214,6 @@ def check_link(tab: Any, pan_type: str, url: str, *, budget: float = PAGE_BUDGET
 __all__ = [
     "VALID", "INVALID", "EMPTY", "ERROR", "RISK",
     "CheckOutcome", "check_link", "build_check_url", "PAN_TYPES_WITH_PWD",
-    "QUARK_VALID_SELECTOR", "BAIDU_VALID_SELECTOR", "BAIDU_ERROR_SELECTOR",
+    "QUARK_VALID_SELECTOR", "BAIDU_VALID_SELECTOR",
     "PAGE_BUDGET_SECONDS",
 ]
