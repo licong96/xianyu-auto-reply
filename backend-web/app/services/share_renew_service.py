@@ -27,7 +27,7 @@ from common.models.material_pool import STATUS_LISTED, MaterialPool
 from common.models.material_pool_link import MaterialPoolPanLink
 from common.models.share_check_log import RENEW_DONE, RENEW_FAILED, ShareCheckLog
 from common.services.card_share_text import refresh_card_for_pool
-from common.utils.share_url import build_check_url
+from common.share_url import build_check_url
 
 # 到期前提前续期的天数（新地址有效期 30 天，旧地址在过期前仍可访问，无切换空窗）
 DEFAULT_RENEW_BEFORE_DAYS = 7

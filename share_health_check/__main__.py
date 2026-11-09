@@ -40,7 +40,8 @@ def main_check(argv: list[str]) -> int:
 
         async def _run() -> dict:
             async with async_session_maker() as session:
-                return await run_check_batch(session, lambda: tab, batch_size=args.batch_size)
+                # open_tab 工厂按 url 入参调用（真实实现忽略入参，复用同一 tab）
+                return await run_check_batch(session, lambda _url: tab, batch_size=args.batch_size)
 
         stats = asyncio.run(_run())
     except Exception as exc:  # noqa: BLE001 - 子进程失败也要输出 RESULT_JSON

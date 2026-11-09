@@ -41,7 +41,7 @@ def render_card_text(pool: Any, links: Sequence[Any]) -> str:
     夸克/百度地址自动拼上提取码（?pwd=），买家点开链接即可直达文件列表；
     提取码行保留，方便手动输入场景。
     """
-    from common.utils.share_url import build_check_url
+    from common.share_url import build_check_url
 
     if links:
         lines: List[str] = []

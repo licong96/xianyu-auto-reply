@@ -30,6 +30,12 @@ def _run(coro):
         loop.close()
 
 
+@pytest.fixture(autouse=True)
+def _no_settle_wait(monkeypatch):
+    """测试里静置等待置零，避免每条用例真实 sleep 3 秒。"""
+    monkeypatch.setattr(checker, "PAGE_SETTLE_SECONDS", 0)
+
+
 class _Container:
     """有效容器替身：quark 场景需要数行。"""
 
@@ -109,6 +115,20 @@ class TestCheckLink:
         out = check_link(tab, "baidu", "https://pan.baidu.com/s/x", budget=3)
         assert out.status == checker.INVALID
         assert "你来晚了" in out.detail
+
+    def test_baidu_hidden_empty_error_container_not_invalid(self):
+        """真实冒烟证实：百度正常分享页 DOM 预置隐藏的空 #shareError，
+        且有效容器存在时必须优先判 valid，不能被错误容器误报。"""
+        tab = FakeTab(err=SimpleNamespace(text="  "), valid=object(), text="共 2 个文件")
+        out = check_link(tab, "baidu", "https://pan.baidu.com/s/x", budget=3)
+        assert out.status == checker.VALID
+
+    def test_baidu_error_container_requires_text(self):
+        """只有隐藏空错误容器、无有效容器时：不能判 invalid，应走到 error 重试。"""
+        tab = FakeTab(err=SimpleNamespace(text=""), text="无关内容")
+        out = check_link(tab, "baidu", "https://pan.baidu.com/s/x", budget=1)
+        assert out.status == checker.ERROR
+        assert out.status != checker.INVALID
 
     def test_quark_invalid_keyword(self):
         tab = FakeTab(text="啊哦，你来晚了，分享的文件已经被删除了，下次要早点哟")

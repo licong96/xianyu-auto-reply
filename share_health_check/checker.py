@@ -2,13 +2,18 @@
 
 判定顺序（每条链接）：
 1. tab.get(url, timeout=剩余预算) —— 页面跳转
-2. 优先轮询"错误容器"：命中 → invalid（链接确实死了，高置信）
-   百度: css:#error-new #shareError
-   夸克: 页面文本命中失效关键词（夸克失效页无稳定容器，用文案白名单）
-3. 轮询"有效容器"：命中 → valid / empty（列表容器存在但无文件条目）
+2. 静置 3 秒：百度分享页有「输入提取码」中间页，DOM 会经历
+   输入页 → 跳转 → 真实分享页的变化，加载完立即查询容易命中
+   残留 DOM 或隐藏预置节点；等 3 秒页面结构稳定再判定
+3. 轮询"有效容器"优先（先确认页面活着且能列出内容）：
    夸克: css:tbody.ant-table-tbody（行数 0 → empty）
    百度: css:div.file-name（"共 N 个文件" N=0 → empty）
-4. 预算耗尽 → 看 URL/文本特征：
+4. 再查"错误容器"：命中且文案非空 → invalid（链接确实死了，高置信）
+   百度: css:#error-new #shareError
+   夸克: 页面文本命中失效关键词（夸克失效页无稳定容器，用文案白名单）
+   注意：百度正常分享页 DOM 预置隐藏的空错误容器（实测误报），
+   必须文案非空才算失效
+5. 预算耗尽 → 看 URL/文本特征：
    命中风控/登录墙特征 → risk（暂停巡检 + 通知人工）
    否则 → error（网络慢等，永不升级为 invalid，只进重试）
 
@@ -29,6 +34,8 @@ ERROR = "error"
 RISK = "risk"
 
 PAGE_BUDGET_SECONDS = 15.0
+# 页面加载完成后、开始查询前的静置时间：等 SPA 渲染与提取码页跳转稳定
+PAGE_SETTLE_SECONDS = 3.0
 POLL_INTERVAL = 0.5
 
 # 各盘选择器与文案（网盘改版后只需改这里）
@@ -70,8 +77,9 @@ class CheckOutcome:
 
 
 # 支持提取码拼接的网盘（夸克/百度分享页都支持 ?pwd= 参数）
-# 逻辑实现在 common/utils/share_url.py，卡券正文与巡检共用一份，此处仅转发
-from common.utils.share_url import PAN_TYPES_WITH_PWD, build_check_url  # noqa: F401  (re-export)
+# 逻辑实现在 common/share_url.py（刻意不在 common.utils，避免巡检子进程
+# 的精简 venv 拉起 PIL 等重依赖），卡券正文与巡检共用一份，此处仅转发
+from common.share_url import PAN_TYPES_WITH_PWD, build_check_url  # noqa: F401  (re-export)
 
 
 def _page_text(tab: Any) -> str:
@@ -113,35 +121,13 @@ def check_link(tab: Any, pan_type: str, url: str, *, budget: float = PAGE_BUDGET
             duration_seconds=time.time() - started,
         )
 
+    # 静置：等提取码中间页跳转与 SPA 渲染稳定，避免查询命中残留 DOM。
+    # 常量从模块全局读取（测试可 monkeypatch 为 0）；不占用则剩余预算不足时自动缩短
+    time.sleep(min(PAGE_SETTLE_SECONDS, max(0.0, deadline - time.time())))
+
     while time.time() < deadline:
         remaining = deadline - time.time()
-        # 1) 错误容器优先（高置信 invalid）
-        if pan_type == "baidu":
-            err = _ele(tab, BAIDU_ERROR_SELECTOR, remaining)
-            if err is not None:
-                snippet = ""
-                try:
-                    snippet = " ".join((err.text or "").split())[:200]
-                except Exception:
-                    pass
-                return CheckOutcome(
-                    status=INVALID,
-                    detail=f"命中错误容器 {BAIDU_ERROR_SELECTOR}：{snippet}",
-                    page_title=_page_title(tab),
-                    duration_seconds=time.time() - started,
-                )
-        else:
-            text = _page_text(tab)
-            for kw in QUARK_INVALID_KEYWORDS:
-                if kw in text:
-                    return CheckOutcome(
-                        status=INVALID,
-                        detail=f"命中失效文案「{kw}」",
-                        page_title=_page_title(tab),
-                        duration_seconds=time.time() - started,
-                    )
-
-        # 2) 有效容器
+        # 1) 有效容器优先：先确认页面活着且能列出内容（用户实测指定的顺序）
         valid_sel = QUARK_VALID_SELECTOR if pan_type == "quark" else BAIDU_VALID_SELECTOR
         container = _ele(tab, valid_sel, remaining)
         if container is not None:
@@ -180,6 +166,33 @@ def check_link(tab: Any, pan_type: str, url: str, *, budget: float = PAGE_BUDGET
                 page_title=_page_title(tab),
                 duration_seconds=time.time() - started,
             )
+
+        # 2) 错误容器：命中且文案非空 → invalid（空文案=隐藏预置节点，不算）
+        if pan_type == "baidu":
+            err = _ele(tab, BAIDU_ERROR_SELECTOR, remaining)
+            if err is not None:
+                snippet = ""
+                try:
+                    snippet = " ".join((err.text or "").split())[:200]
+                except Exception:
+                    pass
+                if snippet:
+                    return CheckOutcome(
+                        status=INVALID,
+                        detail=f"命中错误容器 {BAIDU_ERROR_SELECTOR}：{snippet}",
+                        page_title=_page_title(tab),
+                        duration_seconds=time.time() - started,
+                    )
+        else:
+            text = _page_text(tab)
+            for kw in QUARK_INVALID_KEYWORDS:
+                if kw in text:
+                    return CheckOutcome(
+                        status=INVALID,
+                        detail=f"命中失效文案「{kw}」",
+                        page_title=_page_title(tab),
+                        duration_seconds=time.time() - started,
+                    )
 
         time.sleep(POLL_INTERVAL)
 
