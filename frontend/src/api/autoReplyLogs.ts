@@ -72,3 +72,37 @@ export const getAutoReplyLogs = async (params?: {
   const queryString = queryParams.toString()
   return get<AutoReplyLogListResponse>(`${PREFIX}/auto-reply-logs${queryString ? `?${queryString}` : ''}`)
 }
+
+/** AI 提示词快照：真实发送给模型的完整内容（随消息日志一并入库） */
+export interface AutoReplyPromptSnapshot {
+  system_prompt?: string
+  user_prompt?: string
+  messages?: { role: string; content: string }[]
+  request_messages?: { role: string; content: string }[]
+  item_info?: Record<string, unknown>
+  shop_prompt?: string
+  context_injected?: { role: string; content: string }[]
+  buyer_message?: string
+  default_shop_prompt_used?: boolean
+  custom_global_rules?: string
+  provider_type?: string
+  provider_name?: string
+  model_name?: string
+  transport_note?: string
+}
+
+export interface AutoReplyLogDetail extends AutoReplyLogItem {
+  prompt_snapshot: AutoReplyPromptSnapshot | null
+  context_snapshot: Record<string, unknown> | null
+  reply_segments: unknown[] | null
+}
+
+export interface AutoReplyLogDetailResponse {
+  success: boolean
+  message?: string
+  data: AutoReplyLogDetail | null
+}
+
+export const getAutoReplyLogDetail = async (logId: number): Promise<AutoReplyLogDetailResponse> => {
+  return get<AutoReplyLogDetailResponse>(`${PREFIX}/auto-reply-logs/${logId}`)
+}

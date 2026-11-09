@@ -1631,6 +1631,7 @@ class DatabaseInitializer:
                 send_fail_reason TEXT COMMENT '发送失败原因（如被安全拦截的明文文案）',
                 raw_message_json JSON DEFAULT NULL COMMENT '原始消息JSON',
                 context_snapshot JSON DEFAULT NULL COMMENT '上下文快照',
+                prompt_snapshot JSON DEFAULT NULL COMMENT 'AI提示词快照（真实发送给模型的完整内容）',
                 send_result_json JSON DEFAULT NULL COMMENT '发送结果快照',
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
@@ -2215,6 +2216,7 @@ class DatabaseInitializer:
             ("send_status", "VARCHAR(20) NOT NULL DEFAULT 'unknown' COMMENT '发送状态：success-发送成功/failed-发送失败/unknown-未知(无响应)/timeout-超时(无响应超过阈值)'", "error_message"),
             ("send_fail_reason", "TEXT COMMENT '发送失败原因（如被安全拦截的明文文案）'", "send_status"),
             ("order_no", "VARCHAR(64) DEFAULT NULL COMMENT '订单号（自动发货等场景关联订单）'", "item_title"),
+            ("prompt_snapshot", "JSON DEFAULT NULL COMMENT 'AI提示词快照（真实发送给模型的完整内容：系统规则/店铺规则/商品信息/对话上下文/买家消息）'", "context_snapshot"),
         ],
         "xy_risk_control_logs": [
             ("captcha_engine", "VARCHAR(32) DEFAULT NULL COMMENT '验证通过引擎：playwright-主引擎/drissionpage-兜底引擎/real_mouse-真人鼠标引擎'", "processing_status"),

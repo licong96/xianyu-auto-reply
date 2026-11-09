@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Calendar, ChevronLeft, ChevronRight, MessageSquare, RefreshCw } from 'lucide-react'
+import { Calendar, ChevronLeft, ChevronRight, Eye, MessageSquare, RefreshCw } from 'lucide-react'
 import { getAccountDetails } from '@/api/accounts'
 import { getAutoReplyLogs, type AutoReplyLogItem } from '@/api/autoReplyLogs'
 import { Select } from '@/components/common/Select'
 import { PageLoading } from '@/components/common/Loading'
 import { useUIStore } from '@/store/uiStore'
 import { getApiErrorMessage } from '@/utils/request'
+import { AutoReplyLogDetailModal } from './AutoReplyLogDetailModal'
 import type { AccountDetail } from '@/types'
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100]
@@ -151,6 +152,8 @@ export function AutoReplyLogs() {
   const [pageSize, setPageSize] = useState(20)
   const [total, setTotal] = useState(0)
   const [totalPages, setTotalPages] = useState(0)
+  const [detailLogId, setDetailLogId] = useState<number | null>(null)
+  const [detailOpen, setDetailOpen] = useState(false)
 
   const accountOptions = useMemo(
     () => [
@@ -370,12 +373,13 @@ export function AutoReplyLogs() {
                   <th>消息ID</th>
                   <th>决策原因</th>
                   <th>创建时间</th>
+                  <th>详情</th>
                 </tr>
               </thead>
               <tbody>
                 {logs.length === 0 ? (
                   <tr>
-                    <td colSpan={20}>
+                    <td colSpan={21}>
                       <div className="empty-state py-8">
                         <p className="text-slate-500 dark:text-slate-400">暂无消息日志</p>
                       </div>
@@ -423,6 +427,18 @@ export function AutoReplyLogs() {
                       <td className="align-top min-w-[180px] break-all">{renderText(log.source_message_id)}</td>
                       <td className="align-top min-w-[180px] break-all">{buildDecisionReasonLabel(log.decision_reason)}</td>
                       <td className="align-top whitespace-nowrap">{formatDateTime(log.created_at)}</td>
+                      <td className="align-top whitespace-nowrap">
+                        <button
+                          onClick={() => {
+                            setDetailLogId(log.id)
+                            setDetailOpen(true)
+                          }}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                          详情
+                        </button>
+                      </td>
                     </tr>
                   ))
                 )}
@@ -469,6 +485,15 @@ export function AutoReplyLogs() {
           </div>
         )}
       </div>
+
+      <AutoReplyLogDetailModal
+        isOpen={detailOpen}
+        logId={detailLogId}
+        onClose={() => {
+          setDetailOpen(false)
+          setDetailLogId(null)
+        }}
+      />
     </div>
   )
 }

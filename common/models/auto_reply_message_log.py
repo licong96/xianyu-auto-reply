@@ -67,6 +67,7 @@ class XYAutoReplyMessageLog(Base):
     send_fail_reason: Mapped[str | None] = mapped_column(Text, comment="发送失败原因（如被安全拦截的明文文案）")
     raw_message_json: Mapped[dict | None] = mapped_column(JSON, comment="原始消息JSON")
     context_snapshot: Mapped[dict | None] = mapped_column(JSON, comment="上下文快照")
+    prompt_snapshot: Mapped[dict | None] = mapped_column(JSON, comment="AI提示词快照：真实发送给模型的完整内容（系统规则/店铺规则/商品信息/对话上下文/买家消息/模型与服务商）")
     send_result_json: Mapped[list | dict | None] = mapped_column(JSON, comment="发送结果快照")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), comment="创建时间")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), comment="更新时间")

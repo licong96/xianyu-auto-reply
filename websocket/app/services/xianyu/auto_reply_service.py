@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import time
 import traceback
@@ -29,6 +30,9 @@ from common.models.xy_keyword_rule import XYKeywordRule
 from common.models.xy_catalog_item import XYCatalogItem
 from common.models.default_reply import DefaultReply, DefaultReplyRecord
 from common.models.auto_reply_message_log import XYAutoReplyMessageLog
+from common.models.material_pool import MaterialPool
+from common.models.product_material import ProductMaterial
+from common.models.publish_log import PublishLog
 from common.models.user_setting import UserSetting
 from common.models.xy_order import XYOrder
 from common.db.session import async_session_maker
@@ -2108,6 +2112,157 @@ class AutoReplyService:
         session.add(record)
         await session.commit()
 
+    async def _resolve_item_description(
+        self,
+        session: AsyncSession,
+        account: XYAccount,
+        item: XYCatalogItem,
+    ) -> str:
+        """解析商品描述（目录/卖点/文件格式等），供 AI 上下文使用。
+
+        只查本地业务表，不调用闲鱼接口，按以下优先级逐级尝试，任一级命中即返回：
+        1. 商品 metadata_json.description（历史回写的持久化描述缓存）
+        2. 商品 metadata_json.detail（同步的原始详情 JSON，提取显式描述字段）
+        3. 资料池 xy_material_pool（上架流水线按 账号+商品ID 回填的描述）
+        4. 发布日志 xy_publish_logs（该商品最近一次成功发布的描述）；
+           若发布日志关联了素材（material_id），再兜底查素材库 xy_product_materials
+
+        所有步骤均为尽力而为：任何一步失败都继续向后兜底，最终拿不到则返回空串，
+        绝不影响 AI 回复主流程。
+        """
+        try:
+            metadata = item.metadata_json or {}
+
+            # 1. 已持久化的描述
+            desc = (metadata.get("description") or "").strip()
+            if desc:
+                return desc
+
+            # 2. 同步详情 JSON 提取（仅接受显式的描述字段；
+            #    标题兜底不算描述，避免拦截后面真正的描述来源（资料池/发布日志/素材库））
+            raw_detail = (metadata.get("detail") or "").strip()
+            if raw_detail:
+                try:
+                    parsed_detail = json.loads(raw_detail)
+                except Exception:
+                    parsed_detail = None
+                if isinstance(parsed_detail, dict):
+                    for key in ("description", "desc", "item_description", "itemDesc", "content"):
+                        value = parsed_detail.get(key)
+                        if (
+                            isinstance(value, str)
+                            and value.strip()
+                            and not value.strip().startswith(("{", "["))
+                        ):
+                            return value.strip()
+
+            # 3. 资料池（上架流水线回填的 账号+商品ID → 描述）
+            pool_desc = await self._lookup_material_pool_description(
+                session, account.account_id, item.item_id
+            )
+            if pool_desc:
+                logger.info(f"【{self.cookie_id}】商品描述取自资料池: item_id={item.item_id}")
+                return pool_desc
+
+            # 4. 发布日志 → 素材库
+            publish_desc, material_id = await self._lookup_publish_log_description(
+                session, account.account_id, item.item_id
+            )
+            if publish_desc:
+                logger.info(f"【{self.cookie_id}】商品描述取自发布日志: item_id={item.item_id}")
+                return publish_desc
+            if material_id:
+                material_desc = await self._lookup_product_material_description(
+                    session, material_id
+                )
+                if material_desc:
+                    logger.info(
+                        f"【{self.cookie_id}】商品描述取自素材库: item_id={item.item_id}, material_id={material_id}"
+                    )
+                    return material_desc
+        except Exception as e:
+            logger.warning(f"【{self.cookie_id}】解析商品描述失败，使用空描述: {e}")
+        return ""
+
+    async def _lookup_material_pool_description(
+        self,
+        session: AsyncSession,
+        account_id: str,
+        item_id: str,
+    ) -> str:
+        """从资料池查该商品的描述（上架流水线按 账号+商品ID 回填）"""
+        try:
+            stmt = (
+                select(MaterialPool.description)
+                .where(
+                    MaterialPool.account_id == account_id,
+                    MaterialPool.item_id == item_id,
+                    MaterialPool.description.isnot(None),
+                    MaterialPool.is_deleted == False,  # noqa: E712
+                )
+                .order_by(MaterialPool.id.desc())
+                .limit(1)
+            )
+            result = await session.execute(stmt)
+            desc = result.scalar()
+            return (desc or "").strip()
+        except Exception as e:
+            logger.debug(f"【{self.cookie_id}】查询资料池描述失败: {e}")
+            return ""
+
+    async def _lookup_publish_log_description(
+        self,
+        session: AsyncSession,
+        account_id: str,
+        item_id: str,
+    ) -> tuple[str, int | None]:
+        """从发布日志查该商品最近一次成功发布的描述及关联素材ID
+
+        Returns:
+            (描述文本, 素材ID)；描述为空时素材ID可能仍有值（供素材库兜底）
+        """
+        try:
+            stmt = (
+                select(PublishLog.description, PublishLog.material_id)
+                .where(
+                    PublishLog.account_id == account_id,
+                    PublishLog.item_id == item_id,
+                    PublishLog.status == "success",
+                )
+                .order_by(PublishLog.id.desc())
+                .limit(1)
+            )
+            result = await session.execute(stmt)
+            row = result.first()
+            if not row:
+                return "", None
+            return (row[0] or "").strip(), row[1]
+        except Exception as e:
+            logger.debug(f"【{self.cookie_id}】查询发布日志描述失败: {e}")
+            return "", None
+
+    async def _lookup_product_material_description(
+        self,
+        session: AsyncSession,
+        material_id: int,
+    ) -> str:
+        """从商品素材库查描述（发布日志 material_id 关联的宝贝描述）"""
+        try:
+            stmt = (
+                select(ProductMaterial.description)
+                .where(
+                    ProductMaterial.id == material_id,
+                    ProductMaterial.is_deleted == False,  # noqa: E712
+                )
+                .limit(1)
+            )
+            result = await session.execute(stmt)
+            desc = result.scalar()
+            return (desc or "").strip()
+        except Exception as e:
+            logger.debug(f"【{self.cookie_id}】查询素材库描述失败: {e}")
+            return ""
+
     async def get_ai_reply(
         self,
         session: AsyncSession,
@@ -2193,9 +2348,10 @@ class AutoReplyService:
                         price = float(price_clean) if price_clean else 0
                     except Exception:
                         price = 0
-                    
-                    metadata = item.metadata_json or {}
-                    desc = metadata.get("detail", "") or metadata.get("description", "") or ""
+
+                    # 商品描述：目录/卖点/文件格式等，AI 回答商品问题的关键依据，
+                    # 按 持久化描述 → 同步详情提取 → 发布日志 → 实时拉取 的顺序解析
+                    desc = await self._resolve_item_description(session, account, item)
                     item_info = {
                         "title": item.title or "未知商品",
                         "price": price,
@@ -2220,7 +2376,10 @@ class AutoReplyService:
 
             if reply_trace is not None:
                 reply_trace.setdefault("context_snapshot", {})["ai_item_info"] = item_info
-            
+
+            # 接收AI提示词快照（真实发送给模型的完整内容），随后随日志一并入库，
+            # 便于事后分析AI回复为什么不及预期
+            prompt_sink: Dict[str, Any] = {}
             reply = await ai_engine.generate_reply(
                 message=send_message,
                 item_info=item_info,
@@ -2230,7 +2389,17 @@ class AutoReplyService:
                 item_id=item_id or "",
                 db_session=session,
                 skip_wait=True,
+                prompt_sink=prompt_sink,
             )
+
+            if prompt_sink and reply_trace is not None:
+                reply_trace["prompt_snapshot"] = prompt_sink
+                reply_trace.setdefault("context_snapshot", {})["ai_prompt_snapshot"] = {
+                    "system_prompt_length": len(str(prompt_sink.get("system_prompt") or "")),
+                    "user_prompt_length": len(str(prompt_sink.get("user_prompt") or "")),
+                    "provider_type": prompt_sink.get("provider_type"),
+                    "model_name": prompt_sink.get("model_name"),
+                }
             
             if reply:
                 logger.info(f"【{self.cookie_id}】AI回复生成成功: {reply[:50]}...")

@@ -148,7 +148,7 @@ class AIReplyEngine:
                     return self._shorten_text(desc)
 
             detail_params = parsed.get("detail_params")
-            if isinstance(detail_params, dict):
+            if isinstance(detail_params, dict) and detail_params:
                 parts = [
                     self._normalize_text(detail_params.get("title")),
                     self._normalize_text(detail_params.get("postInfo")),
@@ -686,6 +686,7 @@ class AIReplyEngine:
         item_id: str,
         db_session: AsyncSession,
         skip_wait: bool = False,
+        prompt_sink: Optional[Dict[str, Any]] = None,
     ) -> Optional[str]:
         """生成AI回复
         
@@ -698,6 +699,9 @@ class AIReplyEngine:
             item_id: 商品ID
             db_session: 数据库会话
             skip_wait: 是否跳过等待（默认False）
+            prompt_sink: 可选的输出字典，用于接收「真实发送给AI模型的完整提示词快照」
+                （系统规则/店铺规则/商品信息/对话上下文/买家消息/模型与服务商），
+                供调用方写入日志表，便于事后分析AI回复不及预期的原因。
             
         Returns:
             AI回复或None
@@ -858,6 +862,25 @@ class AIReplyEngine:
                     {"role": "user", "content": user_prompt},
                 ]
                 
+                # 记录真实发送给AI模型的完整提示词快照（在调用API前填充，
+                # 即使后续调用失败也能留存，便于事后分析回复不及预期的原因）
+                if prompt_sink is not None:
+                    prompt_sink.update({
+                        "system_prompt": system_prompt,
+                        "user_prompt": user_prompt,
+                        "messages": messages,
+                        "item_info": item_info,
+                        "shop_prompt": shop_prompt,
+                        "context_injected": context[-10:],
+                        "buyer_message": message,
+                        "default_shop_prompt_used": not (settings.get("shop_prompt") or "").strip(),
+                        "custom_global_rules": (
+                            global_custom.strip()
+                            if isinstance(global_custom, str) and global_custom.strip()
+                            else ""
+                        ),
+                    })
+                
                 # 调用AI生成回复
                 reply = None
                 
@@ -877,6 +900,25 @@ class AIReplyEngine:
                     settings.get("model_name"),
                 )
                 logger.info(f"【{cookie_id}】使用{provider_name} API生成回复 (provider_type={provider_type})")
+                if prompt_sink is not None:
+                    # 记录按服务商协议实际组装的请求消息
+                    # （OpenAI兼容会在system末尾追加「直接回复规则」，此处快照与真实请求保持一致）
+                    request_messages = (
+                        self._build_openai_messages(messages)
+                        if provider_type == "openai_compatible"
+                        else messages
+                    )
+                    prompt_sink.update({
+                        "provider_type": provider_type,
+                        "provider_name": provider_name,
+                        "model_name": settings.get("model_name"),
+                        "request_messages": request_messages,
+                    })
+                    if provider_type != "openai_compatible":
+                        prompt_sink["transport_note"] = (
+                            f"该请求由 {provider_type} 适配层按各自协议转换后发送"
+                            "（system/user 字段拆分或拼接），messages 为转换前的逻辑内容"
+                        )
                 if provider_type == "dashscope_app":
                     reply = await self._call_dashscope_api(settings, messages)
                 elif provider_type == "gemini":

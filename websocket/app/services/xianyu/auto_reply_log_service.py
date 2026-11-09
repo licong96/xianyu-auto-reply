@@ -90,6 +90,7 @@ class AutoReplyLogService:
                 send_fail_reason=self._normalize_optional_str(payload.get("send_fail_reason")),
                 raw_message_json=self._normalize_json_value(payload.get("raw_message_json")),
                 context_snapshot=self._normalize_json_value(payload.get("context_snapshot")),
+                prompt_snapshot=self._normalize_json_value(payload.get("prompt_snapshot")),
                 send_result_json=self._normalize_json_value(payload.get("send_result_json")),
             )
             session.add(record)
