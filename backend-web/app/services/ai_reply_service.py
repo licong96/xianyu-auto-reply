@@ -31,6 +31,13 @@ DEFAULT_AI_SETTINGS = {
     "max_discount_amount": 100,
     "max_bargain_rounds": 3,
     "custom_prompts": "",
+    "shop_prompt": """本店商品全部为虚拟资料（电子版），不是实物：
+- 发货：付款后系统自动发送下载链接，无需等待人工；
+- 网盘：同时提供百度网盘和夸克网盘链接；
+- 无物流：不邮寄、无快递、无邮费，不需要收货地址；
+- 文件格式与具体内容以商品描述为准；
+- 售后：链接失效或无法下载可免费补发；
+- 商品为电子版资料，仅供个人学习使用，请勿传播商用。""",
     "ai_time_range_start": "",
     "ai_time_range_end": "",
     "manual_reply_ai_pause_enabled": False,
@@ -61,6 +68,7 @@ class AIReplySettingsService:
         payload["api_key"] = clean_ai_text(payload.get("api_key"))
         payload["base_url"] = clean_ai_text(payload.get("base_url"))
         payload["custom_prompts"] = payload.get("custom_prompts") or ""
+        payload["shop_prompt"] = clean_ai_text(payload.get("shop_prompt"))
         payload["ai_time_range_start"] = payload.get("ai_time_range_start") or ""
         payload["ai_time_range_end"] = payload.get("ai_time_range_end") or ""
         payload["manual_reply_ai_pause_enabled"] = bool(
@@ -104,6 +112,8 @@ class AIReplySettingsService:
             merged["max_bargain_rounds"] = int(payload.get("max_bargain_rounds", 3) or 0)
         if "custom_prompts" in payload:
             merged["custom_prompts"] = payload.get("custom_prompts") or ""
+        if "shop_prompt" in payload:
+            merged["shop_prompt"] = clean_ai_text(payload.get("shop_prompt"))
         if "ai_time_range_start" in payload:
             merged["ai_time_range_start"] = payload.get("ai_time_range_start") or ""
         if "ai_time_range_end" in payload:

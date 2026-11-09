@@ -61,3 +61,18 @@ async def list_auto_reply_logs(
         "page_size": page_size,
         "total_pages": (total + page_size - 1) // page_size if total > 0 else 0,
     }
+
+
+@router.get("/auto-reply-logs/{log_id}")
+async def get_auto_reply_log_detail(
+    log_id: int,
+    current_user: User = Depends(deps.get_current_active_user),
+    session: AsyncSession = Depends(deps.get_db_session),
+) -> dict:
+    """查询单条消息日志详情（含 AI 提示词快照，用于分析 AI 回复不及预期的原因）"""
+    service = AutoReplyLogService(session)
+    owner_id, _ = resolve_owner_scope(current_user)
+    detail = await service.get_log_detail(log_id=log_id, owner_id=owner_id)
+    if not detail:
+        return {"success": False, "message": "日志不存在或无权查看", "data": None}
+    return {"success": True, "message": "查询成功", "data": detail}

@@ -15,6 +15,7 @@ class AIReplySettings(BaseModel):
     max_discount_amount: int = 100
     max_bargain_rounds: int = 3
     custom_prompts: str = ""
+    shop_prompt: str = ""
     ai_time_range_start: str = ""
     ai_time_range_end: str = ""
     manual_reply_ai_pause_enabled: bool = False
@@ -33,6 +34,7 @@ class AIReplySettingsUpdate(BaseModel):
     max_discount_amount: int | None = None
     max_bargain_rounds: int | None = None
     custom_prompts: str | None = None
+    shop_prompt: str | None = None
     enabled: bool | None = None
     ai_time_range_start: str | None = None
     ai_time_range_end: str | None = None

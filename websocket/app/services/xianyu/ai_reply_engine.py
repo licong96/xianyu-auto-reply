@@ -1,14 +1,15 @@
 """
 AI回复引擎模块
 
-负责AI对话生成、意图识别、议价处理
+负责AI对话生成与提示词分层组装
 支持OpenAI兼容API、DashScope、Gemini等多种AI服务
 
-功能：
-1. 意图检测（基于关键词的本地检测）
-2. AI回复生成（支持OpenAI/DashScope/Gemini）
-3. 对话上下文管理
-4. 议价次数控制
+提示词体系（由模型自行判断买家情境，无关键词预分流）：
+1. 统一话术提示词（身份 + 情境策略 + 示例，可被账号自定义覆盖）
+2. 全局规则（一口价红线、真人客服身份、不引导站外等）
+3. 店铺说明（账号级，ai_reply_settings.shop_prompt）
+4. 商品信息（标题/价格/描述 + 商品AI提示词，自动注入）
+5. 对话上下文（最近10条，自动注入）
 """
 from __future__ import annotations
 
@@ -38,6 +39,17 @@ from common.services.ai_provider_service import (
     normalize_openai_base_url,
     read_ai_enabled,
 )
+
+
+# 默认店铺说明（T2 店铺层）：shop_prompt 未配置时自动使用，
+# 与 backend-web/app/services/ai_reply_service.py 的 DEFAULT_AI_SETTINGS 保持一致。
+DEFAULT_SHOP_PROMPT = """本店商品全部为虚拟资料（电子版），不是实物：
+- 发货：付款后系统自动发送下载链接，无需等待人工；
+- 网盘：同时提供百度网盘和夸克网盘链接；
+- 无物流：不邮寄、无快递、无邮费，不需要收货地址；
+- 文件格式与具体内容以商品描述为准；
+- 售后：链接失效或无法下载可免费补发；
+- 商品为电子版资料，仅供个人学习使用，请勿传播商用。"""
 
 
 class AIReplyEngine:
@@ -70,26 +82,22 @@ class AIReplyEngine:
         return cls._instance
     
     def _init_default_prompts(self):
-        """初始化默认提示词"""
+        """初始化默认提示词（统一话术：情境策略 + 示例，由模型自行判断买家意图）"""
         self.default_prompts = {
-            "price": """你是一位经验丰富的销售专家，擅长议价。
-语言要求：简短直接，每句≤10字，总字数≤40字。
-议价策略：
-1. 根据议价次数递减优惠：第1次小幅优惠，第2次中等优惠，第3次最大优惠
-2. 接近最大议价轮数时要坚持底线，强调商品价值
-3. 优惠不能超过设定的最大百分比和金额
-4. 语气要友好但坚定，突出商品优势
-注意：结合商品信息、对话历史和议价设置，给出合适的回复。""",
-            
-            "tech": """你是一位技术专家，专业解答产品相关问题。
-语言要求：简短专业，每句≤10字，总字数≤40字。
-回答重点：产品功能、使用方法、注意事项。
-注意：基于商品信息回答，避免过度承诺。""",
-            
-            "default": """你是一位资深电商卖家，提供优质客服。
-语言要求：简短友好，每句≤10字，总字数≤40字。
-回答重点：商品介绍、物流、售后等常见问题。
-注意：结合商品信息，给出实用建议。"""
+            "unified": """你是一家专卖虚拟资料的闲鱼店铺客服，负责接待买家咨询并促成下单。
+
+根据买家消息的情境，采用对应的回答策略：
+1. 砍价或问价：直接表明一口价不议价，语气客气但不松口，然后引导直接下单。
+示例——买家：便宜点行吗？
+你：亲，一口价哦～虚拟资料付款自动发网盘链接，现在就能拍。
+2. 询问商品内容、格式、用法：基于商品信息准确回答，不确定的不编造。
+示例——买家：是什么格式的？
+你：PDF 格式，百度和夸克网盘都有，拍下自动发链接～
+3. 其他问题（发货、网盘、售后等）：热情简洁地解答，优先用店铺说明和商品信息回答。网盘问题按店铺说明直接回答，不要说要“帮您确认”。
+示例——买家：是百度网盘吗？
+你：对的，百度网盘和夸克网盘都有，付款后自动发链接～
+
+语言要求：口语化，像闲鱼聊天，简洁直接，总字数≤80字。不要承诺具体时效（如“几分钟内”“马上到”），发货只需说付款后系统自动发送下载链接。"""
         }
     
     def _normalize_text(self, value: Any) -> str:
@@ -113,7 +121,7 @@ class AIReplyEngine:
             return "".join(parts).strip()
         return str(value).strip()
 
-    def _shorten_text(self, value: Any, limit: int = 800) -> str:
+    def _shorten_text(self, value: Any, limit: int = 2000) -> str:
         text = self._normalize_text(value)
         if len(text) <= limit:
             return text
@@ -140,7 +148,7 @@ class AIReplyEngine:
                     return self._shorten_text(desc)
 
             detail_params = parsed.get("detail_params")
-            if isinstance(detail_params, dict):
+            if isinstance(detail_params, dict) and detail_params:
                 parts = [
                     self._normalize_text(detail_params.get("title")),
                     self._normalize_text(detail_params.get("postInfo")),
@@ -158,7 +166,7 @@ class AIReplyEngine:
 
     def _build_openai_messages(self, messages: List[Dict]) -> List[Dict]:
         patched_messages = []
-        direct_rule = "重要：只输出给买家的最终回复文本，不要输出思考过程、分析过程或解释，回复控制在40字以内。"
+        direct_rule = "重要：只输出给买家的最终回复文本，不要输出思考过程、分析过程或解释，回复控制在80字以内。"
         has_system = False
         for msg in messages:
             if msg.get("role") == "system" and not has_system:
@@ -276,45 +284,6 @@ class AIReplyEngine:
         async with self._chat_locks_lock:
             await self._cleanup_expired_chat_locks()
     
-    def detect_intent(self, message: str, cookie_id: str) -> str:
-        """检测用户消息意图（基于关键词的本地检测）
-        
-        Args:
-            message: 用户消息
-            cookie_id: 账号ID
-            
-        Returns:
-            意图类型: price/tech/default
-        """
-        try:
-            msg_lower = message.lower()
-            
-            # 价格相关关键词
-            price_keywords = [
-                "便宜", "优惠", "刀", "降价", "价格", "多少钱",
-                "能少", "还能", "最低", "底价", "实诚价", "到100", "能到",
-                "包个邮"
-            ]
-            if any(kw in msg_lower for kw in price_keywords):
-                logger.debug(f"【{cookie_id}】本地意图检测: price ({message[:20]}...)")
-                return "price"
-            
-            # 技术相关关键词
-            tech_keywords = [
-                "怎么用", "参数", "坏了", "故障", "设置", "说明书",
-                "功能", "用法", "教程", "驱动"
-            ]
-            if any(kw in msg_lower for kw in tech_keywords):
-                logger.debug(f"【{cookie_id}】本地意图检测: tech ({message[:20]}...)")
-                return "tech"
-            
-            logger.debug(f"【{cookie_id}】本地意图检测: default ({message[:20]}...)")
-            return "default"
-            
-        except Exception as e:
-            logger.error(f"【{cookie_id}】本地意图检测失败: {e}")
-            return "default"
-    
     async def _get_account(self, cookie_id: str, db_session: AsyncSession) -> Optional[XYAccount]:
         """获取账号信息"""
         stmt = select(XYAccount).where(XYAccount.account_id == cookie_id)
@@ -415,6 +384,7 @@ class AIReplyEngine:
             "max_discount_percent": 10,
             "max_discount_amount": 100,
             "custom_prompts": "",
+            "shop_prompt": DEFAULT_SHOP_PROMPT,
             "ai_time_range_start": "",
             "ai_time_range_end": "",
             "manual_reply_ai_pause_enabled": False,
@@ -437,6 +407,7 @@ class AIReplyEngine:
         payload["max_discount_percent"] = int(payload.get("max_discount_percent") or 10)
         payload["max_discount_amount"] = int(payload.get("max_discount_amount") or 100)
         payload["custom_prompts"] = payload.get("custom_prompts") or ""
+        payload["shop_prompt"] = clean_ai_text(payload.get("shop_prompt"))
         payload["ai_time_range_start"] = payload.get("ai_time_range_start") or ""
         payload["ai_time_range_end"] = payload.get("ai_time_range_end") or ""
         payload["manual_reply_ai_pause_enabled"] = bool(
@@ -460,7 +431,7 @@ class AIReplyEngine:
         settings: Dict,
         messages: List[Dict],
         max_tokens: int = 8192,
-        temperature: float = 0.5,
+        temperature: float = 0.3,
     ) -> str:
         """调用OpenAI兼容API"""
         try:
@@ -529,7 +500,7 @@ class AIReplyEngine:
         settings: Dict,
         messages: List[Dict],
         max_tokens: int = 100,
-        temperature: float = 0.7,
+        temperature: float = 0.3,
     ) -> str:
         """调用DashScope API"""
         try:
@@ -588,7 +559,7 @@ class AIReplyEngine:
         settings: Dict,
         messages: List[Dict],
         max_tokens: int = 100,
-        temperature: float = 0.7,
+        temperature: float = 0.3,
     ) -> str:
         """调用Gemini API"""
         try:
@@ -652,7 +623,7 @@ class AIReplyEngine:
         settings: Dict,
         messages: List[Dict],
         max_tokens: int = 100,
-        temperature: float = 0.7,
+        temperature: float = 0.3,
     ) -> str:
         """调用Anthropic Claude官方API"""
         try:
@@ -715,6 +686,7 @@ class AIReplyEngine:
         item_id: str,
         db_session: AsyncSession,
         skip_wait: bool = False,
+        prompt_sink: Optional[Dict[str, Any]] = None,
     ) -> Optional[str]:
         """生成AI回复
         
@@ -727,6 +699,9 @@ class AIReplyEngine:
             item_id: 商品ID
             db_session: 数据库会话
             skip_wait: 是否跳过等待（默认False）
+            prompt_sink: 可选的输出字典，用于接收「真实发送给AI模型的完整提示词快照」
+                （系统规则/店铺规则/商品信息/对话上下文/买家消息/模型与服务商），
+                供调用方写入日志表，便于事后分析AI回复不及预期的原因。
             
         Returns:
             AI回复或None
@@ -735,12 +710,8 @@ class AIReplyEngine:
             # 检查AI是否启用
             if not await self.is_ai_enabled(cookie_id, db_session):
                 return None
-            
-            # 检测意图
-            intent = self.detect_intent(message, cookie_id)
-            logger.info(f"【{cookie_id}】检测到意图: {intent}")
-            
-            # 保存用户消息到数据库
+
+            # 保存用户消息到数据库（不再做关键词意图分类，情境判断交给模型）
             now = datetime.now(timezone.utc)
             user_message = AIChatMessage(
                 chat_id=chat_id,
@@ -749,7 +720,6 @@ class AIReplyEngine:
                 item_id=item_id,
                 role="user",
                 content=message,
-                intent=intent,
                 created_at=now,
             )
             db_session.add(user_message)
@@ -816,45 +786,7 @@ class AIReplyEngine:
                 context_result = await db_session.execute(context_stmt)
                 context_rows = context_result.all()
                 context = [{"role": row[0], "content": row[1]} for row in reversed(context_rows)]
-                
-                # 获取议价次数
-                from sqlalchemy import func
-                bargain_stmt = (
-                    select(func.count())
-                    .select_from(AIChatMessage)
-                    .where(
-                        AIChatMessage.chat_id == chat_id,
-                        AIChatMessage.cookie_id == cookie_id,
-                        AIChatMessage.intent == "price",
-                        AIChatMessage.role == "user",
-                    )
-                )
-                bargain_result = await db_session.execute(bargain_stmt)
-                bargain_count = bargain_result.scalar() or 0
-                
-                # 检查议价轮数限制
-                if intent == "price":
-                    max_bargain_rounds = settings.get("max_bargain_rounds", 3)
-                    if bargain_count >= max_bargain_rounds:
-                        logger.info(f"【{cookie_id}】议价次数已达上限 ({bargain_count}/{max_bargain_rounds})")
-                        refuse_reply = "抱歉，这个价格已经是最优惠的了，不能再便宜了哦！"
-                        
-                        # 保存拒绝回复
-                        refuse_message = AIChatMessage(
-                            chat_id=chat_id,
-                            cookie_id=cookie_id,
-                            user_id=user_id,
-                            item_id=item_id,
-                            role="assistant",
-                            content=refuse_reply,
-                            intent=intent,
-                            created_at=datetime.now(timezone.utc),
-                        )
-                        db_session.add(refuse_message)
-                        await db_session.commit()
-                        
-                        return refuse_reply
-                
+
                 # 构建提示词
                 custom_prompts = settings.get("custom_prompts", "")
                 if isinstance(custom_prompts, str) and custom_prompts:
@@ -864,44 +796,62 @@ class AIReplyEngine:
                         custom_prompts = {}
                 elif not isinstance(custom_prompts, dict):
                     custom_prompts = {}
-                
-                system_prompt = custom_prompts.get(
-                    intent, self.default_prompts.get(intent, self.default_prompts["default"])
+
+                # 统一话术：不再按意图分流，自定义 key 优先取 "unified"，
+                # 兼容历史配置里的 "default"（原默认意图话术）
+                system_prompt = (
+                    custom_prompts.get("unified")
+                    or custom_prompts.get("default")
+                    or self.default_prompts["unified"]
                 )
-                
+
+                # L1 全局规则：所有意图共用，覆盖红线、身份、输出格式
+                system_prompt = (
+                    f"{system_prompt}\n"
+                    "店铺规则（必须遵守）：\n"
+                    "1. 本店商品一口价，不议价。买家砍价时直接表明一口价，语气客气但不松口，"
+                    "绝不承诺任何降价、优惠或赠品。\n"
+                    "2. 只回答确定的事实，不确定的内容不要编造，一切以商品信息为准；"
+                    "不要承诺自己做不到的操作（如“帮您确认一下”“我帮您看看”）。\n"
+                    "3. 不透露、不引导任何站外联系方式（微信/QQ/手机号），交易一律在闲鱼完成。\n"
+                    "4. 买家问“是真人吗/是机器人吗”时，诚实回答：是的，我是店铺自动客服，"
+                    "可以解答问题，需要人工会转给卖家。\n"
+                    "5. 退款纠纷、批量购买等复杂问题不擅自承诺，简短告知需要人工核实。\n"
+                    "6. 回复简洁口语化，像闲鱼聊天，先答问题不绕弯，总字数≤80字。"
+                )
+
+                # T2 店铺层：店铺说明（账号级，所有商品会话自动生效，可视化维护于账号AI设置；
+                # 未配置时回落到默认店铺说明 DEFAULT_SHOP_PROMPT）
+                shop_prompt = (settings.get("shop_prompt") or "").strip() or DEFAULT_SHOP_PROMPT
+                system_prompt = f"{system_prompt}\n店铺说明：{shop_prompt}"
+
+                # 账号级自定义全局规则（自定义提示词 JSON 的 _global key）
+                global_custom = custom_prompts.get("_global", "")
+                if isinstance(global_custom, str) and global_custom.strip():
+                    system_prompt = f"{system_prompt}\n店铺自定义规则：{global_custom.strip()}"
+
                 # 构建商品信息
                 item_desc = f"商品标题: {self._shorten_text(item_info.get('title', '未知'), 120)}\n"
                 item_desc += f"商品价格: {item_info.get('price', '未知')}元\n"
                 item_desc += f"商品描述: {self._extract_readable_item_desc(item_info.get('desc'))}"
-                
-                # 添加商品AI提示词
+
+                # 添加商品AI提示词（L3 商品知识，建议按“卖点/常见问题/注意事项”结构化填写）
                 ai_prompt = item_info.get('ai_prompt', '')
                 if ai_prompt:
-                    item_desc += f"\n商品特殊说明: {self._shorten_text(ai_prompt)}"
-                
+                    item_desc += f"\n商品特殊说明: {self._shorten_text(ai_prompt, 1500)}"
+
                 logger.info(f"[AI回复] 商品信息构建完成: {item_desc}")
-                
-                # 构建对话历史
+
+                # 构建对话历史（L4，注明 assistant 即客服本人此前的回复）
                 context_str = "\n".join([
                     f"{msg['role']}: {msg['content']}" for msg in context[-10:]
                 ])
-                
-                # 构建用户消息
-                max_bargain_rounds = settings.get("max_bargain_rounds", 3)
-                max_discount_percent = settings.get("max_discount_percent", 10)
-                max_discount_amount = settings.get("max_discount_amount", 100)
-                
+
                 user_prompt = f"""商品信息：
 {item_desc}
 
-对话历史：
+对话历史（其中 assistant 是你作为客服此前的回复）：
 {context_str}
-
-议价设置：
-- 当前议价次数：{bargain_count}
-- 最大议价轮数：{max_bargain_rounds}
-- 最大优惠百分比：{max_discount_percent}%
-- 最大优惠金额：{max_discount_amount}元
 
 用户消息：{message}
 
@@ -911,6 +861,25 @@ class AIReplyEngine:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ]
+                
+                # 记录真实发送给AI模型的完整提示词快照（在调用API前填充，
+                # 即使后续调用失败也能留存，便于事后分析回复不及预期的原因）
+                if prompt_sink is not None:
+                    prompt_sink.update({
+                        "system_prompt": system_prompt,
+                        "user_prompt": user_prompt,
+                        "messages": messages,
+                        "item_info": item_info,
+                        "shop_prompt": shop_prompt,
+                        "context_injected": context[-10:],
+                        "buyer_message": message,
+                        "default_shop_prompt_used": not (settings.get("shop_prompt") or "").strip(),
+                        "custom_global_rules": (
+                            global_custom.strip()
+                            if isinstance(global_custom, str) and global_custom.strip()
+                            else ""
+                        ),
+                    })
                 
                 # 调用AI生成回复
                 reply = None
@@ -931,6 +900,25 @@ class AIReplyEngine:
                     settings.get("model_name"),
                 )
                 logger.info(f"【{cookie_id}】使用{provider_name} API生成回复 (provider_type={provider_type})")
+                if prompt_sink is not None:
+                    # 记录按服务商协议实际组装的请求消息
+                    # （OpenAI兼容会在system末尾追加「直接回复规则」，此处快照与真实请求保持一致）
+                    request_messages = (
+                        self._build_openai_messages(messages)
+                        if provider_type == "openai_compatible"
+                        else messages
+                    )
+                    prompt_sink.update({
+                        "provider_type": provider_type,
+                        "provider_name": provider_name,
+                        "model_name": settings.get("model_name"),
+                        "request_messages": request_messages,
+                    })
+                    if provider_type != "openai_compatible":
+                        prompt_sink["transport_note"] = (
+                            f"该请求由 {provider_type} 适配层按各自协议转换后发送"
+                            "（system/user 字段拆分或拼接），messages 为转换前的逻辑内容"
+                        )
                 if provider_type == "dashscope_app":
                     reply = await self._call_dashscope_api(settings, messages)
                 elif provider_type == "gemini":
@@ -954,7 +942,7 @@ class AIReplyEngine:
 
                     # 保存AI回复（带重试机制，防止连接丢失）
                     await self._save_ai_message_with_retry(
-                        cookie_id, chat_id, user_id, item_id, reply, intent
+                        cookie_id, chat_id, user_id, item_id, reply, None
                     )
                     logger.info(f"【{cookie_id}】AI回复生成成功: {reply[:50]}...")
                 
@@ -971,18 +959,18 @@ class AIReplyEngine:
         user_id: str,
         item_id: str,
         content: str,
-        intent: str,
+        intent: Optional[str] = None,
         max_retry: int = 3
     ) -> bool:
         """保存AI聊天消息（带重试机制）
-        
+
         Args:
             cookie_id: Cookie ID
             chat_id: 会话ID
             user_id: 用户ID
             item_id: 商品ID
             content: 消息内容
-            intent: 意图
+            intent: 意图（已废弃意图分类，恒为 None，历史数据保留）
             max_retry: 最大重试次数
         Returns:
             是否保存成功

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +21,7 @@ from app.core.security import decode_token
 from common.db.session import async_session_maker
 from common.models import User, UserRole, UserStatus
 from common.schemas.auth import TokenPayload
+from common.utils.internal_auth import INTERNAL_AUTH_HEADER, require_valid_internal_token
 
 settings = get_settings()
 
@@ -72,6 +73,13 @@ async def get_current_admin_user(current_user: User = Depends(get_current_active
     if current_user.role != UserRole.ADMIN:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin privileges required")
     return current_user
+
+
+async def require_internal_auth(request: Request) -> None:
+    """校验 /internal 请求携带的服务间令牌（scheduler 等内部服务调用用）。"""
+    settings = get_settings()
+    provided = request.headers.get(INTERNAL_AUTH_HEADER)
+    require_valid_internal_token(provided, settings.internal_api_token)
 
 
 # ==================== Service 依赖注入 ====================

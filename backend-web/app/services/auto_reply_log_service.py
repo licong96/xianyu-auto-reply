@@ -226,3 +226,57 @@ class AutoReplyLogService:
 
         items = [self._serialize_log_row(log) for log in logs]
         return items, int(total)
+
+    async def get_log_detail(self, *, log_id: int, owner_id: int | None) -> dict | None:
+        """查询单条消息日志详情（含 AI 提示词快照与上下文快照）
+
+        Args:
+            log_id: 日志主键 ID
+            owner_id: 数据作用域（None 表示管理员可查全部，非 None 仅允许本人数据）
+        Returns:
+            日志详情字典；不存在或无权限时返回 None
+        """
+        stmt = select(XYAutoReplyMessageLog).where(XYAutoReplyMessageLog.id == log_id)
+        if owner_id is not None:
+            stmt = stmt.where(XYAutoReplyMessageLog.owner_id == owner_id)
+        result = await self.session.execute(stmt)
+        row = result.scalars().first()
+        if not row:
+            return None
+        return {
+            "id": row.id,
+            "owner_id": row.owner_id,
+            "owner_username": row.owner_username,
+            "account_pk": row.account_pk,
+            "account_id": row.account_id,
+            "account_name": row.account_name,
+            "chat_id": row.chat_id,
+            "item_id": row.item_id,
+            "item_title": row.item_title,
+            "order_no": row.order_no,
+            "source_message_id": row.source_message_id,
+            "sender_user_id": row.sender_user_id,
+            "sender_user_name": row.sender_user_name,
+            "source_message": row.source_message,
+            "source_message_time": safe_isoformat(row.source_message_time),
+            "process_status": row.process_status,
+            "decision_reason": row.decision_reason,
+            "reply_strategy": row.reply_strategy,
+            "reply_mode": row.reply_mode,
+            "matched_keyword": row.matched_keyword,
+            "matched_rule_type": row.matched_rule_type,
+            "ai_model_name": row.ai_model_name,
+            "ai_provider_name": row.ai_provider_name,
+            "reply_text": row.reply_text,
+            "reply_image_url": row.reply_image_url,
+            "error_message": row.error_message,
+            "send_status": row.send_status,
+            "send_fail_reason": row.send_fail_reason,
+            "created_at": safe_isoformat(row.created_at),
+            "updated_at": safe_isoformat(row.updated_at),
+            # 重量级明细字段：AI 提示词快照（真实发送给模型的完整内容）
+            "prompt_snapshot": row.prompt_snapshot,
+            # 上下文快照（商品信息、AI暂停、提示词长度摘要等）
+            "context_snapshot": row.context_snapshot,
+            "reply_segments": row.reply_segments,
+        }

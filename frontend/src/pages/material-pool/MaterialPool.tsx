@@ -25,6 +25,7 @@ import {
   RefreshCw,
   Rocket,
   Search,
+  Share2,
   UploadCloud,
   X,
   XCircle,
@@ -38,6 +39,8 @@ import {
   getMaterialPoolList,
   listMaterialPoolGoods,
   rejectMaterialPool,
+  reshareMaterialPool,
+  refreshMaterialPoolItemStatus,
   updateMaterialPool,
   uploadMaterialPoolCover,
   uploadMaterialPoolToPan,
@@ -129,6 +132,45 @@ function StatusBadge({ status }: { status: string }) {
   )
 }
 
+// 商品实际在售状态筛选选项（对账回写，与流水线 status 独立；listed 只表示曾上架成功）
+const LIVE_STATUS_LABELS: Record<string, string> = {
+  on_sale: '实际在售',
+  off_sale: '已下架',
+  unknown: '未核对',
+}
+
+// 组合状态徽章：listed 时结合对账结果反映商品当下真实状态，其余状态走流水线徽章
+function PoolStatusBadge({ row }: { row: MaterialPoolItem }) {
+  if (row.status === 'listed') {
+    if (row.item_live_status === 'off_sale') {
+      return (
+        <span
+          title="商品已被删除或下架，可重新上架"
+          className="px-2 py-0.5 rounded-full text-xs font-medium bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-400"
+        >
+          已下架
+        </span>
+      )
+    }
+    if (row.item_live_status === 'on_sale') {
+      return (
+        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-600 dark:bg-green-900/30 dark:text-green-400">
+          在售
+        </span>
+      )
+    }
+    return (
+      <span
+        title="对账尚未核对该商品，每小时自动核对"
+        className="px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400"
+      >
+        在售·待核对
+      </span>
+    )
+  }
+  return <StatusBadge status={row.status} />
+}
+
 // ==================== 弹窗外壳 ====================
 
 function ModalShell({
@@ -185,6 +227,7 @@ export function MaterialPool() {
   const [rows, setRows] = useState<MaterialPoolItem[]>([])
   const [accounts, setAccounts] = useState<AccountDetail[]>([])
   const [statusFilter, setStatusFilter] = useState('')
+  const [liveStatusFilter, setLiveStatusFilter] = useState('')
   const [sourceTypeFilter, setSourceTypeFilter] = useState('')
   const [schoolFilter, setSchoolFilter] = useState('')
   const [yearFilter, setYearFilter] = useState('')
@@ -205,6 +248,9 @@ export function MaterialPool() {
   const [rejectTarget, setRejectTarget] = useState<MaterialPoolItem | null>(null)
   const [uploadTarget, setUploadTarget] = useState<MaterialPoolItem | null>(null)
   const [downloadTarget, setDownloadTarget] = useState<MaterialPoolItem | null>(null)
+  const [reshareTarget, setReshareTarget] = useState<MaterialPoolItem | null>(null)
+  const [resharingId, setResharingId] = useState<number | null>(null)
+  const [refreshingLiveId, setRefreshingLiveId] = useState<number | null>(null)
   const [downloadingId, setDownloadingId] = useState<number | null>(null)
 
   const accountOptions = useMemo(
@@ -224,11 +270,17 @@ export function MaterialPool() {
     ...Object.entries(STATUS_LABELS).map(([value, label]) => ({ value, label, key: value })),
   ]
 
+  const liveStatusOptions = [
+    { value: '', label: '全部实际状态', key: 'all' },
+    ...Object.entries(LIVE_STATUS_LABELS).map(([value, label]) => ({ value, label, key: value })),
+  ]
+
   const loadRows = async (nextPage: number = page, nextPageSize: number = pageSize) => {
     try {
       setLoading(true)
       const res = await getMaterialPoolList({
         status: statusFilter || undefined,
+        item_live_status: liveStatusFilter || undefined,
         source_type: sourceTypeFilter || undefined,
         school: schoolFilter.trim() || undefined,
         year: yearFilter.trim() || undefined,
@@ -329,6 +381,58 @@ export function MaterialPool() {
     }
   }
 
+  const PAN_TYPE_LABELS: Record<string, string> = { baidu: '百度网盘', quark: '夸克网盘' }
+
+  const handleReshare = async () => {
+    if (!reshareTarget) return
+    setSubmitting(true)
+    setResharingId(reshareTarget.id)
+    try {
+      const res = await reshareMaterialPool(reshareTarget.id)
+      if (res.success && res.data) {
+        const failed = res.data.results.filter((r) => !r.ok)
+        if (failed.length === 0) {
+          const pans = res.data.results.map((r) => PAN_TYPE_LABELS[r.pan_type] || r.pan_type).join('、')
+          addToast({ type: 'success', message: `重新分享成功（${pans}），链接已更新` })
+        } else {
+          const okPans = res.data.results.filter((r) => r.ok).map((r) => PAN_TYPE_LABELS[r.pan_type] || r.pan_type)
+          if (okPans.length) {
+            addToast({ type: 'success', message: `已重建：${okPans.join('、')}` })
+          }
+          failed.forEach((f) => {
+            addToast({ type: 'error', message: `${PAN_TYPE_LABELS[f.pan_type] || f.pan_type} 分享失败：${f.error || '未知错误'}` })
+          })
+        }
+        setReshareTarget(null)
+        loadRows()
+      } else {
+        addToast({ type: 'error', message: res.message || '重新分享失败' })
+      }
+    } catch (error) {
+      addToast({ type: 'error', message: getApiErrorMessage(error, '重新分享失败') })
+    } finally {
+      setSubmitting(false)
+      setResharingId(null)
+    }
+  }
+
+  const handleRefreshLive = async (row: MaterialPoolItem) => {
+    setRefreshingLiveId(row.id)
+    try {
+      const res = await refreshMaterialPoolItemStatus(row.id)
+      if (res.success) {
+        addToast({ type: 'success', message: res.message || '核对完成' })
+      } else {
+        addToast({ type: 'error', message: res.message || '核对失败' })
+      }
+      loadRows()
+    } catch (error) {
+      addToast({ type: 'error', message: getApiErrorMessage(error, '核对失败') })
+    } finally {
+      setRefreshingLiveId(null)
+    }
+  }
+
   const handleDownload = async () => {
     if (!downloadTarget) return
     setSubmitting(true)
@@ -413,6 +517,8 @@ export function MaterialPool() {
     Boolean(row.local_path) && !row.pan_url && ['crawled', 'uploaded', 'failed'].includes(row.status)
   // 无本地文件且未上传网盘：可触发「下载试卷」（接管浏览器下载 + 自动上传网盘）
   const canDownloadFile = (row: MaterialPoolItem) => !row.local_path && !row.pan_url
+  // 已有网盘位置（入池过）即可重建分享链接，修复失效/错配
+  const canReshare = (row: MaterialPoolItem) => row.pan_links.length > 0
   const canApprove = (row: MaterialPoolItem) =>
     ['pending', 'crawled', 'uploaded', 'failed', 'rejected'].includes(row.status)
   const canReject = (row: MaterialPoolItem) => !['listed', 'rejected'].includes(row.status)
@@ -442,6 +548,10 @@ export function MaterialPool() {
             <div className="input-group min-w-[160px]">
               <label className="input-label">状态</label>
               <Select value={statusFilter} onChange={setStatusFilter} options={statusOptions} placeholder="全部状态" />
+            </div>
+            <div className="input-group min-w-[160px]">
+              <label className="input-label">实际在售</label>
+              <Select value={liveStatusFilter} onChange={setLiveStatusFilter} options={liveStatusOptions} placeholder="全部实际状态" />
             </div>
             <div className="input-group min-w-[140px]">
               <label className="input-label">来源</label>
@@ -621,7 +731,7 @@ export function MaterialPool() {
                         {row.price != null ? `¥${Number(row.price).toFixed(2)}` : '-'}
                       </td>
                       <td className="align-top whitespace-nowrap">
-                        <StatusBadge status={row.status} />
+                        <PoolStatusBadge row={row} />
                         {row.retry_count > 0 && row.status === 'failed' && (
                           <div className="text-xs text-slate-400 mt-0.5">重试 {row.retry_count} 次</div>
                         )}
@@ -665,6 +775,35 @@ export function MaterialPool() {
                             >
                               <UploadCloud className="w-3.5 h-3.5" />
                               上传网盘
+                            </button>
+                          )}
+                          {canReshare(row) && (
+                            <button
+                              onClick={() => setReshareTarget(row)}
+                              disabled={resharingId !== null}
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs bg-amber-50 text-amber-600 hover:bg-amber-100 dark:bg-amber-900/30 dark:text-amber-400 disabled:opacity-50"
+                            >
+                              {resharingId === row.id ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <Share2 className="w-3.5 h-3.5" />
+                              )}
+                              {resharingId === row.id ? '分享中...' : '重新分享'}
+                            </button>
+                          )}
+                          {row.status === 'listed' && row.item_id && (
+                            <button
+                              onClick={() => handleRefreshLive(row)}
+                              disabled={refreshingLiveId !== null}
+                              title="与商品目录比对，核对该商品当下是否仍在目录中（无接口调用）"
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs bg-purple-50 text-purple-600 hover:bg-purple-100 dark:bg-purple-900/30 dark:text-purple-400 disabled:opacity-50"
+                            >
+                              {refreshingLiveId === row.id ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <RefreshCw className="w-3.5 h-3.5" />
+                              )}
+                              {refreshingLiveId === row.id ? '核对中...' : '核对在售'}
                             </button>
                           )}
                           {canApprove(row) && (
@@ -819,6 +958,18 @@ export function MaterialPool() {
         loading={submitting}
         onConfirm={handleUploadPan}
         onCancel={() => setUploadTarget(null)}
+      />
+
+      {/* 重新分享确认 */}
+      <ConfirmModal
+        isOpen={reshareTarget !== null}
+        title="重新分享"
+        message={`将为「${reshareTarget?.paper_name || ''}」在所有已入池网盘（${reshareTarget?.pan_links.map((l) => PAN_TYPE_LABELS[l.pan_type] || l.pan_type).join('、') || ''}）强制创建新的分享链接并覆盖旧链接，用于修复失效或错配的分享地址。确定继续吗？`}
+        confirmText="重新分享"
+        type="warning"
+        loading={submitting}
+        onConfirm={handleReshare}
+        onCancel={() => setReshareTarget(null)}
       />
 
       {/* 下载试卷确认 */}

@@ -8,24 +8,34 @@
 4. POST   /material-pool/{id}/approve      审核通过（可顺带定价）
 5. POST   /material-pool/{id}/reject       标记不售
 6. POST   /material-pool/{id}/upload-pan   触发上传夸克网盘并生成分享链接
-7. POST   /material-pool/{id}/download     触发浏览器接管下载，成功后自动上传网盘
-8. POST   /material-pool/{id}/list         一键上架（body: account_id）
-9. POST   /material-pool/batch-list        批量上架（body: ids + account_id）
+7. POST   /material-pool/{id}/reshare      对已有记录重建各网盘分享链接（修复失效/错配）
+8. POST   /material-pool/{id}/download     触发浏览器接管下载，成功后自动上传网盘
+9. POST   /material-pool/{id}/list         一键上架（body: account_id）
+10. POST  /material-pool/batch-list        批量上架（body: ids + account_id）
 
 # CUSTOM: 资料池自动化流水线（新增文件，合并作者更新零冲突）
 """
 from __future__ import annotations
 
+import asyncio
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, Query
+from loguru import logger
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_active_user, get_db_session
+from app.api.routes.pan_browser import _share_days, _validate_share_url
 from app.services.material_pool_service import MaterialPoolError, MaterialPoolService
+from app.services.pan.base import make_client
+from common.models.material_pool import LIVE_OFF_SALE, LIVE_ON_SALE, LIVE_UNKNOWN, MaterialPool
+from common.models.material_pool_link import MaterialPoolPanLink
 from common.models.user import User
 from common.schemas.common import ApiResponse
+from common.services.material_pool_live_status import check_pool_item_live_status
 
 router = APIRouter(prefix="/material-pool", tags=["资料池"])
 
@@ -99,6 +109,12 @@ class BatchListRequest(BaseModel):
     publish_options: Optional[PublishOptionsRequest] = Field(None, description="公共发布选项，逐行与各行已存选项 merge")
 
 
+class ReshareRequest(BaseModel):
+    pan_types: Optional[List[str]] = Field(
+        None, description="要重建分享的网盘类型；为空则重建子表全部网盘"
+    )
+
+
 def _pool_error_resp(exc: MaterialPoolError) -> ApiResponse:
     return ApiResponse(success=False, message=str(exc), data=None)
 
@@ -106,6 +122,7 @@ def _pool_error_resp(exc: MaterialPoolError) -> ApiResponse:
 @router.get("", response_model=ApiResponse)
 async def list_pools(
     status: Optional[str] = Query(None),
+    item_live_status: Optional[str] = Query(None, description="商品实际在售状态筛选：on_sale/off_sale/unknown"),
     school: Optional[str] = Query(None),
     year: Optional[str] = Query(None),
     grade: Optional[str] = Query(None),
@@ -122,6 +139,7 @@ async def list_pools(
         page=page,
         page_size=page_size,
         status=status,
+        item_live_status=item_live_status,
         school=school,
         year=year,
         grade=grade,
@@ -205,6 +223,47 @@ async def upload_pan(
     return ApiResponse(success=True, message="上传成功，分享链接已生成", data=data)
 
 
+@router.post("/{pool_id}/reshare", response_model=ApiResponse)
+async def reshare_pool(
+    pool_id: int,
+    req: ReshareRequest,
+    current_user: User = Depends(get_current_active_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> Dict[str, Any]:
+    """对已有记录重建各网盘分享链接（强制新建，不走复用查重），用于修复
+    链接失效、跨盘错配（如 baidu 行存了夸克地址）等问题。逐盘返回结果。"""
+    stmt = (
+        select(MaterialPool)
+        .where(
+            MaterialPool.id == pool_id,
+            MaterialPool.owner_id == current_user.id,
+            MaterialPool.is_deleted == False,  # noqa: E712
+        )
+        .limit(1)
+    )
+    pool = (await session.execute(stmt)).scalar_one_or_none()
+    if not pool:
+        return ApiResponse(success=False, message="资料不存在", data=None)
+
+    link_stmt = select(MaterialPoolPanLink).where(MaterialPoolPanLink.pool_id == pool_id)
+    links = (await session.execute(link_stmt)).scalars().all()
+    if req.pan_types:
+        wanted = set(req.pan_types)
+        links = [l for l in links if l.pan_type in wanted]
+    if not links:
+        return ApiResponse(success=False, message="该资料没有可重建分享的网盘记录（需先「入池」生成网盘位置）", data=None)
+
+    # 重建逻辑在 share_renew_service（定时续期共用）：含卡券重建与日志落库
+    from app.services.share_renew_service import reshare_pool_links
+
+    data = await reshare_pool_links(session, pool, list(links), log_prefix="[material-pool]")
+    ok_count = data["success_count"]
+    message = f"重新分享完成：成功 {ok_count} / 共 {len(links)} 个网盘"
+    return ApiResponse(success=ok_count > 0, message=message, data={
+        "results": data["results"], "success_count": ok_count, "total": len(links),
+    })
+
+
 @router.post("/{pool_id}/download", response_model=ApiResponse)
 async def download_pool(
     pool_id: int,
@@ -223,6 +282,41 @@ async def download_pool(
     except Exception as exc:  # noqa: BLE001
         return ApiResponse(success=False, message=f"下载失败：{exc}", data=None)
     return ApiResponse(success=True, message="下载完成，已上传网盘并生成分享链接", data=data)
+
+
+@router.post("/{pool_id}/refresh-item-status", response_model=ApiResponse)
+async def refresh_item_status(
+    pool_id: int,
+    current_user: User = Depends(get_current_active_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> Dict[str, Any]:
+    """手动核对该资料池记录的商品实际在售状态（与商品目录比对，无接口调用），回写 item_live_status。"""
+    stmt = (
+        select(MaterialPool)
+        .where(
+            MaterialPool.id == pool_id,
+            MaterialPool.owner_id == current_user.id,
+            MaterialPool.is_deleted == False,  # noqa: E712
+        )
+        .limit(1)
+    )
+    pool = (await session.execute(stmt)).scalar_one_or_none()
+    if not pool:
+        return ApiResponse(success=False, message="资料不存在", data=None)
+    result = await check_pool_item_live_status(session, pool)
+    return ApiResponse(
+        success=result["status"] != LIVE_UNKNOWN,
+        message={
+            LIVE_ON_SALE: "商品在售",
+            LIVE_OFF_SALE: f"商品不在售：{result['error']}",
+        }.get(result["status"], f"核对失败：{result['error']}"),
+        data={
+            "id": pool.id,
+            "item_live_status": pool.item_live_status,
+            "item_live_checked_at": pool.item_live_checked_at.isoformat() if pool.item_live_checked_at else None,
+            "item_live_error": pool.item_live_error,
+        },
+    )
 
 
 @router.post("/{pool_id}/list", response_model=ApiResponse)

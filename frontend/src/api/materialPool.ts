@@ -64,6 +64,10 @@ export interface MaterialPoolItem {
   item_id: string | null
   card_id: number | null
   relist_rule_id: number | null
+  /** 商品实际在售状态：on_sale/off_sale/unknown（对账回写，与 status 独立） */
+  item_live_status: string | null
+  item_live_checked_at: string | null
+  item_live_error: string | null
   error_message: string | null
   retry_count: number
   owner_id: number
@@ -81,6 +85,8 @@ export interface MaterialPoolListResult {
 
 export interface MaterialPoolListParams {
   status?: string
+  /** 商品实际在售状态筛选：on_sale/off_sale/unknown */
+  item_live_status?: string
   school?: string
   year?: string
   grade?: string
@@ -186,6 +192,16 @@ export const downloadMaterialPoolFile = async (id: number): Promise<ApiResponse<
   return post<ApiResponse<MaterialPoolItem>>(`${PREFIX}/${id}/download`, {}, { timeout: 600000 })
 }
 
+/** 重新分享：对已有记录重建各网盘分享链接（修复失效/错配链接），逐盘返回结果 */
+export interface ReshareResult {
+  results: Array<{ pan_type: string; ok: boolean; share_url?: string; error?: string }>
+  success_count: number
+  total: number
+}
+export const reshareMaterialPool = async (id: number, panTypes?: string[]): Promise<ApiResponse<ReshareResult>> => {
+  return post<ApiResponse<ReshareResult>>(`${PREFIX}/${id}/reshare`, panTypes ? { pan_types: panTypes } : {})
+}
+
 export const listMaterialPoolGoods = async (id: number, accountId: string, category?: MaterialPoolCategory, publishOptions?: MaterialPoolPublishOptions): Promise<ApiResponse<MaterialPoolItem>> => {
   return post<ApiResponse<MaterialPoolItem>>(`${PREFIX}/${id}/list`, { account_id: accountId, category, publish_options: publishOptions })
 }
@@ -207,6 +223,17 @@ export const uploadMaterialPoolCover = async (file: File): Promise<{ path: strin
     throw new Error(res.message || '封面上传失败')
   }
   return { path, url: url || '' }
+}
+
+/** 手动核对该资料池记录的商品实际在售状态（调闲鱼详情接口） */
+export interface ItemLiveStatusResult {
+  id: number
+  item_live_status: string
+  item_live_checked_at: string | null
+  item_live_error: string | null
+}
+export const refreshMaterialPoolItemStatus = async (id: number): Promise<ApiResponse<ItemLiveStatusResult>> => {
+  return post<ApiResponse<ItemLiveStatusResult>>(`${PREFIX}/${id}/refresh-item-status`, {})
 }
 
 /** 把 cover_image 存储值转成可预览的 URL（绝对路径或 /static/ 相对路径均可） */
