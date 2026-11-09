@@ -44,7 +44,7 @@ from common.services.ai_provider_service import (
 # 默认店铺说明（T2 店铺层）：shop_prompt 未配置时自动使用，
 # 与 backend-web/app/services/ai_reply_service.py 的 DEFAULT_AI_SETTINGS 保持一致。
 DEFAULT_SHOP_PROMPT = """本店商品全部为虚拟资料（电子版），不是实物：
-- 发货：付款后系统自动发送下载链接，无需等待人工，几分钟内收到；
+- 发货：付款后系统自动发送下载链接，无需等待人工；
 - 网盘：同时提供百度网盘和夸克网盘链接；
 - 无物流：不邮寄、无快递、无邮费，不需要收货地址；
 - 文件格式与具体内容以商品描述为准；
@@ -97,7 +97,7 @@ class AIReplyEngine:
 示例——买家：是百度网盘吗？
 你：对的，百度网盘和夸克网盘都有，付款后自动发链接～
 
-语言要求：口语化，像闲鱼聊天，简洁直接，总字数≤80字。"""
+语言要求：口语化，像闲鱼聊天，简洁直接，总字数≤80字。不要承诺具体时效（如“几分钟内”“马上到”），发货只需说付款后系统自动发送下载链接。"""
         }
     
     def _normalize_text(self, value: Any) -> str:
