@@ -54,7 +54,11 @@ def _run_crawler_download_subprocess(pool_id: int, timeout: int = 420) -> dict:
     子进程最后一行输出 RESULT_JSON: 前缀的结果，过程日志在 stderr。
     """
     root = Path(__file__).resolve().parents[3]  # backend-web/app/services/xxx.py -> 项目根
-    py = root / "paper_crawler" / ".venv" / "bin" / "python"
+    # Windows venv 布局为 Scripts/python.exe，类 Unix 为 bin/python
+    if sys.platform == "win32":
+        py = root / "paper_crawler" / ".venv" / "Scripts" / "python.exe"
+    else:
+        py = root / "paper_crawler" / ".venv" / "bin" / "python"
     if not py.exists():
         raise MaterialPoolError(f"爬虫虚拟环境不存在：{py}")
     cmd = [str(py), "-m", "paper_crawler", "download", "--id", str(pool_id)]

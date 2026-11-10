@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
@@ -38,7 +39,11 @@ def _repo_root() -> Path:
 
 
 def _checker_python() -> Path:
-    return _repo_root() / "paper_crawler" / ".venv" / "bin" / "python"
+    # Windows venv 布局为 Scripts/python.exe，类 Unix 为 bin/python
+    venv_dir = _repo_root() / "paper_crawler" / ".venv"
+    if sys.platform == "win32":
+        return venv_dir / "Scripts" / "python.exe"
+    return venv_dir / "bin" / "python"
 
 
 def _parse_result(stdout: str) -> Dict[str, Any]:
