@@ -62,12 +62,13 @@ export const getPanStatus = async (): Promise<ApiResponse<{ drives: PanDriveStat
   return get<ApiResponse<{ drives: PanDriveStatus[] }>>(`${PREFIX}/status`)
 }
 
-/** 列出指定目录内容（多盘并列 + 合并） */
+/** 列出指定目录内容（多盘并列 + 合并）；raw=true 按原始绝对路径列出（不收拢到网盘管理根目录） */
 export const getPanEntries = async (
-  path: string
+  path: string,
+  raw = false
 ): Promise<ApiResponse<{ path: string; root?: string; drives: PanDriveStatus[]; list: PanEntry[] }>> => {
   return get<ApiResponse<{ path: string; root?: string; drives: PanDriveStatus[]; list: PanEntry[] }>>(
-    `${PREFIX}/entries?path=${encodeURIComponent(path)}`
+    `${PREFIX}/entries?path=${encodeURIComponent(path)}${raw ? '&raw=1' : ''}`
   )
 }
 

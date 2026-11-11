@@ -8,6 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import deps
 from common.models.user import User
+from common.models.material_pool import MaterialPool
+from common.models.material_pool_link import MaterialPoolPanLink
 from common.schemas.common import ApiResponse
 from common.utils.auth_scope import resolve_owner_scope
 from common.utils.default_reply_api import validate_api_url, normalize_api_timeout
@@ -651,6 +653,74 @@ async def save_item_ai_prompt(
     except Exception as e:
         logger.error(f"保存商品AI提示词失败: {e}")
         return ApiResponse(success=False, message=f"保存失败: {str(e)}")
+
+
+@items_router.get("/{cookie_id}/{item_id}/pan-path", response_model=ApiResponse)
+async def get_item_pan_path(
+    cookie_id: str,
+    item_id: str,
+    current_user: User = Depends(deps.get_current_active_user),
+    account_service: AccountService = Depends(deps.get_account_service),
+    session: AsyncSession = Depends(deps.get_db_session),
+) -> ApiResponse:
+    """按 item_id 反查资料池，返回该商品对应的网盘文件夹路径。
+
+    供商品AI提示词弹窗「从网盘追加文件信息」使用：
+    资料池上架的商品可直接命中 pan_links 子表路径；
+    未命中返回 found=False，由前端降级为手贴路径。
+    """
+    owner_id, is_admin = resolve_owner_scope(current_user)
+
+    account = await account_service.get_account_for_user(owner_id, cookie_id)
+    if not account:
+        return ApiResponse(success=False, message="账号不存在")
+
+    try:
+        stmt = (
+            select(MaterialPool)
+            .where(
+                MaterialPool.item_id == item_id,
+                MaterialPool.is_deleted.is_(False),
+            )
+            .order_by(MaterialPool.updated_at.desc())
+        )
+        if not is_admin:
+            stmt = stmt.where(MaterialPool.owner_id == owner_id)
+        pool = (await session.execute(stmt)).scalars().first()
+
+        if not pool:
+            return ApiResponse(
+                success=True,
+                message="ok",
+                data={"found": False, "path": None},
+            )
+
+        path = None
+        links = (
+            await session.execute(
+                select(MaterialPoolPanLink).where(MaterialPoolPanLink.pool_id == pool.id)
+            )
+        ).scalars().all()
+        for link in links:
+            if link.pan_path:
+                path = link.pan_path
+                break
+        if not path:
+            path = pool.pan_path
+
+        return ApiResponse(
+            success=True,
+            message="ok",
+            data={
+                "found": bool(path),
+                "path": path,
+                "is_dir": bool(pool.is_dir),
+                "pool_title": pool.title or pool.paper_name,
+            },
+        )
+    except Exception as e:
+        logger.error(f"反查商品网盘路径失败: {e}")
+        return ApiResponse(success=False, message=f"查询失败: {str(e)}")
 
 
 class BatchDeleteAiPromptRequest(PydanticBaseModel):

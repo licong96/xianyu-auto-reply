@@ -1,6 +1,7 @@
-﻿import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { CheckSquare, Download, Edit2, ExternalLink, Loader2, Package, PackageX, RefreshCw, Search, Square, Trash2, X, Settings, Plus, MessageSquare, Bot, ChevronLeft, ChevronRight, ImagePlus, Unlink, Tag } from 'lucide-react'
-import { batchDeleteItems, batchDeleteXianyuItems, batchOfflineItems, deleteItem, fetchAllItemsFromAccessibleAccounts, fetchAllItemsFromAccount, getItemsPaginated, updateItem, updateItemMultiQuantityDelivery, updateItemMultiSpec, updateItemPrice, getItemDefaultReply, saveItemDefaultReply, deleteItemDefaultReply, batchSaveItemDefaultReply, batchDeleteItemDefaultReply, getItemAiPrompt, saveItemAiPrompt, batchDeleteItemAiPrompt, batchSaveItemAiPrompt, uploadItemDefaultReplyImage, uploadBatchDefaultReplyImage, type ItemFilterParams } from '@/api/items'
+import { batchDeleteItems, batchDeleteXianyuItems, batchOfflineItems, deleteItem, fetchAllItemsFromAccessibleAccounts, fetchAllItemsFromAccount, getItemsPaginated, updateItem, updateItemMultiQuantityDelivery, updateItemMultiSpec, updateItemPrice, getItemDefaultReply, saveItemDefaultReply, deleteItemDefaultReply, batchSaveItemDefaultReply, batchDeleteItemDefaultReply, getItemAiPrompt, saveItemAiPrompt, batchDeleteItemAiPrompt, batchSaveItemAiPrompt, getItemPanPath, uploadItemDefaultReplyImage, uploadBatchDefaultReplyImage, type ItemFilterParams } from '@/api/items'
+import { getPanEntries, type PanEntry } from '@/api/panBrowser'
 import { getAccountDetails } from '@/api/accounts'
 import { getUserSetting } from '@/api/settings'
 import { batchClearItemRelations } from '@/api/cards'
@@ -119,6 +120,10 @@ export function Items() {
   const [aiPromptContent, setAiPromptContent] = useState('')
   const [loadingAiPrompt, setLoadingAiPrompt] = useState(false)
   const [savingAiPrompt, setSavingAiPrompt] = useState(false)
+  // 从网盘追加文件信息
+  const [appendingPanInfo, setAppendingPanInfo] = useState(false)
+  const [showPanPathInput, setShowPanPathInput] = useState(false)
+  const [panPathInput, setPanPathInput] = useState('')
 
   // 批量新增AI提示词弹窗状态
   const [showBatchAiPromptModal, setShowBatchAiPromptModal] = useState(false)
@@ -1063,6 +1068,94 @@ export function Items() {
   const closeAiPrompt = () => {
     setAiPromptItem(null)
     setAiPromptContent('')
+    setAppendingPanInfo(false)
+    setShowPanPathInput(false)
+    setPanPathInput('')
+  }
+
+  // 把网盘文件列表格式化成提示词文本块（固定结构，便于人工识别/删除旧块）
+  const formatPanFileBlock = (list: PanEntry[]): string => {
+    const MAX_FILES = 50
+    const today = new Date().toISOString().slice(0, 10)
+    const fmtSize = (bytes: number | null | undefined): string => {
+      if (bytes == null || bytes < 0) return '—'
+      if (bytes >= 1 << 30) return `${(bytes / (1 << 30)).toFixed(1)} GB`
+      if (bytes >= 1 << 20) return `${(bytes / (1 << 20)).toFixed(1)} MB`
+      if (bytes >= 1 << 10) return `${(bytes / (1 << 10)).toFixed(1)} KB`
+      return `${bytes} B`
+    }
+    const fileType = (name: string): string => {
+      const idx = name.lastIndexOf('.')
+      const ext = idx > 0 ? name.slice(idx + 1).toUpperCase() : ''
+      return ext || '文件'
+    }
+    const pickSize = (entry: PanEntry): number | null => {
+      for (const loc of entry.locations) {
+        if (loc.size != null) return loc.size
+      }
+      return null
+    }
+
+    const dirs = list.filter((e) => e.dir)
+    const files = list.filter((e) => !e.dir)
+    const lines: string[] = [`【网盘文件清单 · ${today} 手动同步】`]
+    if (dirs.length > 0) lines.push(`（内含 ${dirs.length} 个子文件夹）`)
+    files.slice(0, MAX_FILES).forEach((f) => {
+      lines.push(`${f.file_name}｜${fileType(f.file_name)}｜${fmtSize(pickSize(f))}`)
+    })
+    if (files.length > MAX_FILES) {
+      lines.push(`……等共 ${files.length} 个文件（仅列出前 ${MAX_FILES} 个）`)
+    }
+    const total = files.reduce((sum, f) => sum + (pickSize(f) ?? 0), 0)
+    lines.push(`共 ${files.length} 个文件，总计 ${fmtSize(total)}`)
+    return lines.join('\n')
+  }
+
+  // 从网盘追加文件信息到提示词末尾（不覆盖已有内容）
+  // manualPath 为空时先按 item_id 反查资料池拿网盘路径；反查不到则展开手贴路径输入框
+  const handleAppendPanInfo = async (manualPath?: string) => {
+    if (!aiPromptItem) return
+    setAppendingPanInfo(true)
+    try {
+      let path = (manualPath || '').trim()
+      if (!path) {
+        const res = await getItemPanPath(aiPromptItem.cookie_id, aiPromptItem.item_id)
+        if (!res.success) {
+          addToast({ type: 'error', message: res.message || '查询网盘路径失败' })
+          return
+        }
+        path = (res.data?.path || '').trim()
+        if (!path) {
+          setShowPanPathInput(true)
+          addToast({
+            type: 'info',
+            message: '该商品未关联资料池网盘路径，请手动粘贴文件夹路径',
+          })
+          return
+        }
+      }
+
+      const entriesRes = await getPanEntries(path, true)
+      const list = entriesRes.data?.list || []
+      if (!entriesRes.success || list.length === 0) {
+        addToast({
+          type: 'warning',
+          message: `网盘文件夹为空或不存在：${path}`,
+        })
+        return
+      }
+
+      const block = formatPanFileBlock(list)
+      // 固定追加到末尾：旧内容去尾空白 + 空行 + 新块
+      setAiPromptContent((prev) => `${prev.trimEnd()}\n\n${block}\n`)
+      setShowPanPathInput(false)
+      setPanPathInput('')
+      addToast({ type: 'success', message: '网盘文件信息已追加到提示词末尾' })
+    } catch {
+      addToast({ type: 'error', message: '获取网盘文件信息失败' })
+    } finally {
+      setAppendingPanInfo(false)
+    }
   }
 
   // 保存AI提示词配置
@@ -2358,14 +2451,14 @@ export function Items() {
       {/* AI提示词配置弹窗 */}
       {aiPromptItem && (
         <div className="modal-overlay" style={{ zIndex: 60 }}>
-          <div className="modal-content max-w-lg">
+          <div className="modal-content max-w-2xl">
             <div className="modal-header flex items-center justify-between">
               <div>
                 <h2 className="modal-title flex items-center gap-2">
                   <Bot className="w-5 h-5 text-blue-500" />
                   商品AI提示词
                 </h2>
-                <p className="text-sm text-gray-500 mt-1 truncate max-w-[300px]">
+                <p className="text-sm text-gray-500 mt-1 truncate max-w-[460px]">
                   {aiPromptItem.item_title || aiPromptItem.title || aiPromptItem.item_id}
                 </p>
               </div>
@@ -2381,13 +2474,48 @@ export function Items() {
               ) : (
                 <>
                   <div className="input-group">
-                    <label className="input-label">AI提示词内容</label>
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="input-label mb-0">AI提示词内容</label>
+                      <button
+                        type="button"
+                        onClick={() => handleAppendPanInfo()}
+                        disabled={appendingPanInfo}
+                        className="text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400 flex items-center gap-1 disabled:opacity-50"
+                        title="读取该商品网盘文件夹内的文件名称/类型/大小，追加到下方内容末尾"
+                      >
+                        {appendingPanInfo ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Download className="w-3.5 h-3.5" />
+                        )}
+                        从网盘追加文件信息
+                      </button>
+                    </div>
                     <textarea
                       value={aiPromptContent}
                       onChange={(e) => setAiPromptContent(e.target.value)}
-                      className="input-ios h-40 resize-none"
+                      className="input-ios h-72 resize-y"
                       placeholder="想写什么就直接写，没有格式要求"
                     />
+                    {showPanPathInput && (
+                      <div className="mt-2 flex gap-2">
+                        <input
+                          type="text"
+                          value={panPathInput}
+                          onChange={(e) => setPanPathInput(e.target.value)}
+                          className="input-ios flex-1"
+                          placeholder="粘贴网盘文件夹路径，如 /资料池/数学/2025 期中期末"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleAppendPanInfo(panPathInput)}
+                          disabled={appendingPanInfo || !panPathInput.trim()}
+                          className="btn-ios-primary whitespace-nowrap"
+                        >
+                          获取并追加
+                        </button>
+                      </div>
+                    )}
                   </div>
                   <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg text-sm text-blue-600 dark:text-blue-400">
                     <strong>说明：</strong>
@@ -2396,6 +2524,7 @@ export function Items() {
                       <li>商品AI提示词会与系统提示词合并使用</li>
                       <li>可以用于补充商品特有的回复要求或注意事项</li>
                       <li>例如：特殊发货说明、售后政策、使用方法等</li>
+                      <li>「从网盘追加文件信息」会把网盘文件夹内的文件清单追加到末尾，不覆盖已有内容，可继续编辑</li>
                     </ul>
                   </div>
                 </>

@@ -365,6 +365,18 @@ export const saveItemAiPrompt = (
   return put(`${ITEM_PREFIX}/${cookieId}/${itemId}/ai-prompt`, { ai_prompt: aiPrompt })
 }
 
+// 商品对应的网盘路径（反查资料池；未命中 found=false，由前端降级为手贴路径）
+export interface ItemPanPathResult {
+  found: boolean
+  path: string | null
+  is_dir?: boolean
+  pool_title?: string | null
+}
+
+export const getItemPanPath = (cookieId: string, itemId: string): Promise<ApiResponse<ItemPanPathResult>> => {
+  return get(`${ITEM_PREFIX}/${cookieId}/${itemId}/pan-path`)
+}
+
 // 批量删除商品AI提示词配置
 export const batchDeleteItemAiPrompt = (
   cookieId: string,

@@ -240,6 +240,7 @@ async def pan_status(current_user: User = Depends(get_current_active_user)) -> D
 @router.get("/entries", response_model=ApiResponse)
 async def pan_entries(
     path: str = Query("/", max_length=1000),
+    raw: bool = Query(False, description="true=按原始绝对路径列出（仅规范化，不收拢到根目录），供商品AI提示词同步等已确知路径的场景"),
     current_user: User = Depends(get_current_active_user),
     session: AsyncSession = Depends(get_db_session),
 ) -> Dict[str, Any]:
@@ -247,9 +248,10 @@ async def pan_entries(
 
     path 传 "/" 或越出根目录（PAN_ROOT_DIR，默认 /闲鱼）时收拢到根目录，
     响应里带 root 供前端把根目录显示为面包屑起点。
+    raw=true 时跳过根目录收拢（仍规范化 .. 到盘根），用于资料池等根目录之外的已知路径。
     """
     root = _pan_root_dir()
-    path = _resolve_pan_path(path, root)
+    path = _resolve_pan_path(path, "/") if raw else _resolve_pan_path(path, root)
 
     async def _list(pan_type: str) -> Dict[str, Any]:
         try:
