@@ -7,7 +7,7 @@
  * 3. 触发上传夸克网盘
  * 4. 一键上架 / 批量上架
  */
-import { get, post, put } from '@/utils/request'
+import { del, get, post, put } from '@/utils/request'
 import { toPreviewUrl } from '@/utils/staticUrl'
 import type { ApiResponse } from '@/types'
 import type { MaterialVideo } from '@/api/productPublish'
@@ -181,6 +181,11 @@ export const approveMaterialPool = async (id: number, payload: { price?: number;
 
 export const rejectMaterialPool = async (id: number): Promise<ApiResponse<MaterialPoolItem>> => {
   return post<ApiResponse<MaterialPoolItem>>(`${PREFIX}/${id}/reject`, {})
+}
+
+/** 物理删除资料池记录（listing/listed 状态后端拒绝；已生成的网盘分享链接不会被撤销） */
+export const deleteMaterialPool = async (id: number): Promise<ApiResponse> => {
+  return del<ApiResponse>(`${PREFIX}/${id}`)
 }
 
 export const uploadMaterialPoolToPan = async (id: number): Promise<ApiResponse<{ id: number; pan_url: string; pan_code: string | null; share_id: string | null }>> => {

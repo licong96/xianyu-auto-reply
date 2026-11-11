@@ -31,7 +31,15 @@ from app.api.deps import get_current_active_user, get_db_session
 from app.api.routes.pan_browser import _share_days, _validate_share_url
 from app.services.material_pool_service import MaterialPoolError, MaterialPoolService
 from app.services.pan.base import make_client
-from common.models.material_pool import LIVE_OFF_SALE, LIVE_ON_SALE, LIVE_UNKNOWN, MaterialPool
+from common.models.auto_relist_rule import AutoRelistRule
+from common.models.material_pool import (
+    LIVE_OFF_SALE,
+    LIVE_ON_SALE,
+    LIVE_UNKNOWN,
+    STATUS_LISTED,
+    STATUS_LISTING,
+    MaterialPool,
+)
 from common.models.material_pool_link import MaterialPoolPanLink
 from common.models.user import User
 from common.schemas.common import ApiResponse
@@ -282,6 +290,71 @@ async def download_pool(
     except Exception as exc:  # noqa: BLE001
         return ApiResponse(success=False, message=f"下载失败：{exc}", data=None)
     return ApiResponse(success=True, message="下载完成，已上传网盘并生成分享链接", data=data)
+
+
+@router.delete("/{pool_id}", response_model=ApiResponse)
+async def delete_pool(
+    pool_id: int,
+    current_user: User = Depends(get_current_active_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> Dict[str, Any]:
+    """物理删除一条资料池记录（含 pan_links 子表行）。
+
+    可删：crawled / uploaded / pending / approved / rejected / failed；
+    listed 仅限「已下架」（item_live_status=off_sale），unknown 需先「核对在售」。
+    不可删：listing（在途流水线会回写失败）、listed 且仍在售。
+    listed 删除时同步停用其自动续售规则（规则挂在素材库上，不停用会把商品重新拉回在售）；
+    仅当规则 current_item_id 仍指向本商品时才停用，避免误伤共享素材的其他记录。
+    注意：已生成的网盘分享链接不会撤销，删除后停止自动续期，成为孤儿链接（自然过期）。
+    不用软删除：爬虫 source_url 去重不过滤 is_deleted，软删会让该 URL 永远无法重新采集。
+    """
+    stmt = (
+        select(MaterialPool)
+        .where(
+            MaterialPool.id == pool_id,
+            MaterialPool.owner_id == current_user.id,
+            MaterialPool.is_deleted == False,  # noqa: E712
+        )
+        .limit(1)
+    )
+    pool = (await session.execute(stmt)).scalar_one_or_none()
+    if not pool:
+        return ApiResponse(success=False, message="资料不存在", data=None)
+
+    if pool.status == STATUS_LISTING:
+        return ApiResponse(success=False, message="上架中不能删除：流水线正在写入商品/卡券信息", data=None)
+    if pool.status == STATUS_LISTED:
+        if pool.item_live_status == LIVE_UNKNOWN:
+            return ApiResponse(
+                success=False,
+                message="该商品的在售状态未知：请先点「核对在售」确认已下架后再删除",
+                data=None,
+            )
+        if pool.item_live_status != LIVE_OFF_SALE:
+            return ApiResponse(
+                success=False,
+                message="在售商品不能删除：网盘链接续期巡检、自动续售与 AI 商品描述都依赖该记录",
+                data=None,
+            )
+        # 已下架：停用自动续售规则，防止商品被自动重新上架
+        if pool.relist_rule_id:
+            rule = await session.get(AutoRelistRule, pool.relist_rule_id)
+            if rule and rule.enabled and rule.current_item_id == pool.item_id:
+                rule.enabled = False
+                rule.status = "disabled"
+                logger.info(
+                    f"[material-pool] 删除已下架记录，同步停用续售规则 rule={rule.id} item={rule.current_item_id}"
+                )
+
+    links = (
+        await session.execute(select(MaterialPoolPanLink).where(MaterialPoolPanLink.pool_id == pool_id))
+    ).scalars().all()
+    for link in links:
+        await session.delete(link)
+    await session.delete(pool)
+    await session.commit()
+    logger.info(f"[material-pool] 删除记录 pool={pool_id} status={pool.status} shares={len(links)}")
+    return ApiResponse(success=True, message="已删除", data=None)
 
 
 @router.post("/{pool_id}/refresh-item-status", response_model=ApiResponse)

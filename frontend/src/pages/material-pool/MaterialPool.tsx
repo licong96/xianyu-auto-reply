@@ -26,6 +26,7 @@ import {
   Rocket,
   Search,
   Share2,
+  Trash2,
   UploadCloud,
   X,
   XCircle,
@@ -44,6 +45,7 @@ import {
   updateMaterialPool,
   uploadMaterialPoolCover,
   uploadMaterialPoolToPan,
+  deleteMaterialPool,
   type MaterialPoolCategory,
   type MaterialPoolItem,
   type MaterialPoolPublishOptions,
@@ -246,6 +248,7 @@ export function MaterialPool() {
   const [listRow, setListRow] = useState<MaterialPoolItem | null>(null)
   const [batchListOpen, setBatchListOpen] = useState(false)
   const [rejectTarget, setRejectTarget] = useState<MaterialPoolItem | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<MaterialPoolItem | null>(null)
   const [uploadTarget, setUploadTarget] = useState<MaterialPoolItem | null>(null)
   const [downloadTarget, setDownloadTarget] = useState<MaterialPoolItem | null>(null)
   const [reshareTarget, setReshareTarget] = useState<MaterialPoolItem | null>(null)
@@ -357,6 +360,25 @@ export function MaterialPool() {
       }
     } catch (error) {
       addToast({ type: 'error', message: getApiErrorMessage(error, '操作失败') })
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return
+    setSubmitting(true)
+    try {
+      const res = await deleteMaterialPool(deleteTarget.id)
+      if (res.success) {
+        addToast({ type: 'success', message: '已删除' })
+        setDeleteTarget(null)
+        loadRows()
+      } else {
+        addToast({ type: 'error', message: res.message || '删除失败' })
+      }
+    } catch (error) {
+      addToast({ type: 'error', message: getApiErrorMessage(error, '删除失败') })
     } finally {
       setSubmitting(false)
     }
@@ -524,6 +546,13 @@ export function MaterialPool() {
   const canReject = (row: MaterialPoolItem) => !['listed', 'rejected'].includes(row.status)
   const canList = (row: MaterialPoolItem) =>
     Boolean(row.pan_url) && ['approved', 'failed'].includes(row.status)
+  // 删除可见性：上架中绝不可删（在途流水线竞态）；在售（listed 且非 off_sale）不可删；
+  // listed 且已下架（off_sale）可删；unknown（未核对过）保留按钮，由后端拒绝并提示先「核对在售」
+  const canDelete = (row: MaterialPoolItem) => {
+    if (row.status === 'listing') return false
+    if (row.status === 'listed') return row.item_live_status === 'off_sale'
+    return true
+  }
 
   if (loading && rows.length === 0) {
     return <PageLoading />
@@ -840,6 +869,16 @@ export function MaterialPool() {
                             <Pencil className="w-3.5 h-3.5" />
                             编辑
                           </button>
+                          {canDelete(row) && (
+                            <button
+                              onClick={() => setDeleteTarget(row)}
+                              disabled={submitting}
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs bg-red-50 text-red-600 hover:bg-red-100 dark:bg-red-900/30 dark:text-red-400 disabled:opacity-50"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              删除
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -946,6 +985,22 @@ export function MaterialPool() {
         loading={submitting}
         onConfirm={handleReject}
         onCancel={() => setRejectTarget(null)}
+      />
+
+      {/* 删除确认 */}
+      <ConfirmModal
+        isOpen={deleteTarget !== null}
+        title="删除资料"
+        message={`将永久删除「${deleteTarget?.paper_name || ''}」及其网盘位置记录，不可恢复。已生成的网盘分享链接不会被撤销，会成为无人管理的孤儿链接（自然过期）。${
+          deleteTarget?.status === 'listed'
+            ? '该商品已下架：删除后将同步停用其自动续售规则（不再自动重新上架），网盘链接停止自动续期，老买家的补发请求可能受影响。'
+            : ''
+        }确定删除吗？`}
+        confirmText="永久删除"
+        type="warning"
+        loading={submitting}
+        onConfirm={handleDelete}
+        onCancel={() => setDeleteTarget(null)}
       />
 
       {/* 上传网盘确认 */}
